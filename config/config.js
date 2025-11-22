@@ -1,7 +1,7 @@
 export default {
   xp: {
     minuteLimit: 5,
-    dailyLimit: 100
+    dailyLimit: 500
   },
   spam: {
     maxMsgsPerWindow: 7,
@@ -15,10 +15,10 @@ export default {
       { id: 'canvapro_30d', name: 'CanvaPro 30 ngày', price: 1200, type: 'canva_pro' }
     ],
     randomRewards: [
-      { type: 'capcut', chance: 10 },
-      { type: 'canva_edu', chance: 20 },
+      { type: 'capcut', chance: 5 },
+      { type: 'canva_edu', chance: 10 },
       { type: 'canva_pro', chance: 15 },
-      { type: 'nothing', chance: 65 }
+      { type: 'nothing', chance: 75 }
     ]
   }
 };
