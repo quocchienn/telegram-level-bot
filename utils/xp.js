@@ -160,7 +160,7 @@ export default async (ctx, next) => {
   }
 
   const minuteLimit = config.xp?.minuteLimit ?? 5;
-  const dailyLimit = config.xp?.dailyLimit ?? 100;
+  const dailyLimit = config.xp?.dailyLimit ?? 500;
 
   // Nếu đã đạt giới hạn thì không cộng
   if (user.minuteXP >= minuteLimit || user.dayXP >= dailyLimit) {
