@@ -7,6 +7,9 @@ const userSchema = new mongoose.Schema({
   // XP & level
   totalXP: { type: Number, default: 0 },
 
+  // ✅ đếm số lần chat
+  messageCount: { type: Number, default: 0 },
+
   dayXP: { type: Number, default: 0 },
   weekXP: { type: Number, default: 0 },
   monthXP: { type: Number, default: 0 },
