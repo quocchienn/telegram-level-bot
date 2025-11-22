@@ -70,18 +70,18 @@ export default (bot) => {
     const xpNextLevel = 5 * nextLevel * nextLevel;
     const need = Math.max(0, xpNextLevel - u.totalXP);
 
-    await ctx.reply(
-      [
-        '📊 Thông tin của bạn:',
-        `• Level hiện tại: ${level}`,
-        `• XP hiện tại: ${u.totalXP}`,
-        `• Còn thiếu: ${need} XP để lên Level ${nextLevel}`,
-        `• Coin: ${u.topCoin}`,
-        `• Tuần: ${u.weekXP} XP • Tháng: ${u.monthXP} XP`
-      ].join('\n'),
-      { reply_to_message_id: ctx.message?.message_id }
-    );
-  });
+ await ctx.reply(
+  [
+    '📊 Thông tin của bạn:',
+    `• Level hiện tại: ${level}`,
+    `• XP hiện tại: ${u.totalXP}`,
+    `• Còn thiếu: ${need} XP để lên Level ${nextLevel}`,
+    `• Coin: ${u.topCoin}`,
+    `• Tuần: ${u.weekXP} XP • Tháng: ${u.monthXP} XP`,
+    `• Tổng số tin nhắn đã gửi: ${u.messageCount || 0}`
+  ].join('\n'),
+  { reply_to_message_id: ctx.message?.message_id }
+);
 
   // ================= TOP =================
 
