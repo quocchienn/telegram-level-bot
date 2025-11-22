@@ -1,5 +1,11 @@
+// utils/xp.js
 import User from '../models/User.js';
 import config from '../config/config.js';
+
+// ✅ ADMIN MẶC ĐỊNH – TELEGRAM ID CỦA BẠN
+const DEFAULT_ADMINS = [
+  5589888565
+];
 
 // Tính key ngày: YYYY-MM-DD
 function getDayKey(date = new Date()) {
@@ -51,7 +57,7 @@ async function addWarning(user, ctx) {
   }
 }
 
-// Middleware chính
+// Middleware chính – dùng trong bot.use(xpHandler)
 export default async (ctx, next) => {
   if (!ctx.message) return next();
   const msg = ctx.message;
@@ -61,7 +67,7 @@ export default async (ctx, next) => {
   const text = msg.text || msg.caption || '';
   if (!text) return next();
 
-  // Chỉ tính XP trong group / supergroup
+  // Chỉ xử lý trong group / supergroup
   if (!msg.chat || (msg.chat.type !== 'group' && msg.chat.type !== 'supergroup')) {
     return next();
   }
@@ -73,7 +79,9 @@ export default async (ctx, next) => {
   if (!user) {
     user = await User.create({
       telegramId: from.id,
-      username: from.username || ''
+      username: from.username || '',
+      // ✅ nếu là ID mặc định → set admin luôn
+      role: DEFAULT_ADMINS.includes(from.id) ? 'admin' : 'user'
     });
   }
 
@@ -195,7 +203,7 @@ export default async (ctx, next) => {
     const levelUp = newLevel - oldLevel;
 
     // B) Thưởng coin cho mỗi level tăng
-    const coinPerLevel = 50; // chỉnh được
+    const coinPerLevel = 2;
     let totalBonus = levelUp * coinPerLevel;
     user.topCoin += totalBonus;
 
