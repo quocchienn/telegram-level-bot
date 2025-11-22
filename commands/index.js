@@ -788,4 +788,4 @@ export default (bot) => {
 
     await ctx.reply('✅ Đã duyệt reward.', { reply_to_message_id: ctx.message?.message_id });
   });
-};
+});
