@@ -35,16 +35,38 @@ export default (bot) => {
     );
   });
 
-  // /me
-  bot.command('me', async (ctx) => {
-    let u = await User.findOne({ telegramId: ctx.from.id });
-    if (!u) return ctx.reply('Bạn chưa có dữ liệu, hãy chat trong group trước.');
-    const level = calcLevel(u.totalXP);
-    await ctx.reply(
-      `Level: ${level}\nXP: ${u.totalXP}\nCoin: ${u.topCoin}\n` +
-      `Tuần: ${u.weekXP} XP • Tháng: ${u.monthXP} XP`
+ // /me
+bot.command('me', async (ctx) => {
+  // lấy user từ DB
+  let u = await User.findOne({ telegramId: ctx.from.id });
+  if (!u) {
+    return ctx.reply(
+      'Bạn chưa có dữ liệu, hãy chat trong group trước.',
+      { reply_to_message_id: ctx.message?.message_id }
     );
-  });
+  }
+
+  const level = calcLevel(u.totalXP);
+
+  // level kế tiếp
+  const nextLevel = level + 1;
+  // XP cần để đạt level tiếp theo: 5 * (L+1)^2
+  const xpNextLevel = 5 * nextLevel * nextLevel;
+  // XP còn thiếu
+  const need = Math.max(0, xpNextLevel - u.totalXP);
+
+  await ctx.reply(
+    [
+      '📊 Thông tin của bạn:',
+      `• Level hiện tại: ${level}`,
+      `• XP hiện tại: ${u.totalXP}`,
+      `• Còn thiếu: ${need} XP để lên Level ${nextLevel}`,
+      `• Coin: ${u.topCoin}`,
+      `• Tuần: ${u.weekXP} XP • Tháng: ${u.monthXP} XP`
+    ].join('\n'),
+    { reply_to_message_id: ctx.message?.message_id } // bot reply vào tin nhắn /me
+  );
+});
 
   // /top (tổng) – top 10
   bot.command('top', async (ctx) => {
