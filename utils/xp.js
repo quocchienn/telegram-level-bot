@@ -199,12 +199,12 @@ export default async (ctx, next) => {
     const levelUp = newLevel - oldLevel;
 
     // Kiểu B: thưởng coin mỗi level
-    const coinPerLevel = 2;
+    const coinPerLevel = 10;
     let totalBonus = levelUp * coinPerLevel;
 
     // Kiểu A: thưởng mốc level
     const milestoneRewards = {
-      5: 20,
+      5: 30,
       10: 40,
       20: 60,
       30: 80,
