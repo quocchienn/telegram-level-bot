@@ -195,7 +195,7 @@ export default async (ctx, next) => {
     const levelUp = newLevel - oldLevel;
 
     // B) Thưởng coin cho mỗi level tăng
-    const coinPerLevel = 2; // chỉnh được
+    const coinPerLevel = 50; // chỉnh được
     let totalBonus = levelUp * coinPerLevel;
     user.topCoin += totalBonus;
 
