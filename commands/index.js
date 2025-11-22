@@ -1,4 +1,3 @@
-// commands/index.js
 import User from '../models/User.js';
 import Reward from '../models/Reward.js';
 import config from '../config/config.js';
@@ -6,36 +5,40 @@ import { calcLevel } from '../utils/xp.js';
 
 // ✅ ADMIN MẶC ĐỊNH – TELEGRAM ID CỦA BẠN
 const DEFAULT_ADMINS = [
-  5589888565
+  5589888565 // sửa thành ID của bạn nếu khác
 ];
 
-// helper: key ngày YYYY-MM-DD
+// helper: key ngày YYYY-MM-DD (dùng cho daily/claimdaily)
 function getDayKey(date = new Date()) {
   return date.toISOString().slice(0, 10);
 }
 
-// helper: tìm user theo arg (id hoặc @username)
+// helper: tìm user theo ID hoặc @username
 async function findUserByArg(arg) {
   if (!arg) return null;
+
+  // Nếu là ID
+  if (/^\d+$/.test(arg)) {
+    return await User.findOne({ telegramId: Number(arg) });
+  }
+
+  // Nếu là @username
   if (arg.startsWith('@')) {
-    const username = arg.slice(1);
-    return await User.findOne({ username });
+    return await User.findOne({ username: arg.slice(1) });
   }
-  const idNum = Number(arg);
-  if (!isNaN(idNum)) {
-    return await User.findOne({ telegramId: idNum });
-  }
+
   return null;
 }
 
-// helper: check admin
+// helper: check admin trong bot
 async function isAdmin(userId) {
-  // nếu là ID nằm trong danh sách admin mặc định → cho phép luôn
+  // nếu là ID mặc định → auto admin
   if (DEFAULT_ADMINS.includes(userId)) return true;
 
   const u = await User.findOne({ telegramId: userId });
   return u && u.role === 'admin';
 }
+
 
 export default (bot) => {
   // /start
@@ -339,8 +342,9 @@ export default (bot) => {
     );
   });
 
-  // ================= ADMIN & REWARD =================
+   // ================= ADMIN PACK =================
 
+  // /addadmin <telegramId>
   bot.command('addadmin', async (ctx) => {
     if (!await isAdmin(ctx.from.id)) {
       return ctx.reply('Bạn không có quyền.', { reply_to_message_id: ctx.message?.message_id });
@@ -359,9 +363,10 @@ export default (bot) => {
     if (!u) u = await User.create({ telegramId: idNum });
     u.role = 'admin';
     await u.save();
-    await ctx.reply(`Đã set admin cho ID ${idNum}`, { reply_to_message_id: ctx.message?.message_id });
+    await ctx.reply(`✅ Đã set admin cho ID ${idNum}`, { reply_to_message_id: ctx.message?.message_id });
   });
 
+  // /removeadmin <telegramId>
   bot.command('removeadmin', async (ctx) => {
     if (!await isAdmin(ctx.from.id)) {
       return ctx.reply('Bạn không có quyền.', { reply_to_message_id: ctx.message?.message_id });
@@ -380,9 +385,10 @@ export default (bot) => {
     if (!u) return ctx.reply('Không tìm thấy user này.', { reply_to_message_id: ctx.message?.message_id });
     u.role = 'user';
     await u.save();
-    await ctx.reply(`Đã gỡ admin của ID ${idNum}`, { reply_to_message_id: ctx.message?.message_id });
+    await ctx.reply(`✅ Đã gỡ admin của ID ${idNum}`, { reply_to_message_id: ctx.message?.message_id });
   });
 
+  // /give <user> <coin|xp> <số lượng>
   bot.command('give', async (ctx) => {
     if (!await isAdmin(ctx.from.id)) {
       return ctx.reply('Bạn không có quyền.', { reply_to_message_id: ctx.message?.message_id });
@@ -391,12 +397,14 @@ export default (bot) => {
     const userArg = parts[1];
     const type = parts[2];
     const amountStr = parts[3];
+
     if (!userArg || !type || !amountStr) {
       return ctx.reply(
         'Dùng: /give <telegramId|@username> <coin|xp> <số lượng>',
         { reply_to_message_id: ctx.message?.message_id }
       );
     }
+
     const amount = Number(amountStr);
     if (isNaN(amount) || amount <= 0) {
       return ctx.reply('Số lượng không hợp lệ.', { reply_to_message_id: ctx.message?.message_id });
@@ -408,33 +416,210 @@ export default (bot) => {
     }
 
     if (type === 'coin') {
-      target.topCoin += amount;
+      target.topCoin = (target.topCoin || 0) + amount;
     } else if (type === 'xp') {
-      target.totalXP += amount;
+      target.totalXP = (target.totalXP || 0) + amount;
     } else {
       return ctx.reply('Loại chỉ hỗ trợ: coin hoặc xp', { reply_to_message_id: ctx.message?.message_id });
     }
+
     await target.save();
+
     await ctx.reply(
-      `Đã cộng ${amount} ${type} cho ${target.username || target.telegramId}`,
+      `✅ Đã cộng ${amount} ${type} cho ${target.username || target.telegramId}`,
       { reply_to_message_id: ctx.message?.message_id }
     );
   });
 
-  bot.command('ban', async (ctx) => {
+  // /removecoin <user> <số lượng>
+  bot.command('removecoin', async (ctx) => {
     if (!await isAdmin(ctx.from.id)) {
       return ctx.reply('Bạn không có quyền.', { reply_to_message_id: ctx.message?.message_id });
     }
+
     const parts = ctx.message.text.split(' ').filter(Boolean);
     const userArg = parts[1];
-    if (!userArg) {
-      return ctx.reply('Dùng: /ban <telegramId|@username>', { reply_to_message_id: ctx.message?.message_id });
+    const amountStr = parts[2];
+
+    if (!userArg || !amountStr) {
+      return ctx.reply('Dùng: /removecoin <telegramId|@username> <số lượng>',
+        { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const amount = Number(amountStr);
+    if (isNaN(amount) || amount <= 0) {
+      return ctx.reply('Số lượng không hợp lệ.', { reply_to_message_id: ctx.message?.message_id });
     }
 
     const target = await findUserByArg(userArg);
     if (!target) {
       return ctx.reply('Không tìm thấy user.', { reply_to_message_id: ctx.message?.message_id });
     }
+
+    target.topCoin = Math.max(0, (target.topCoin || 0) - amount);
+    await target.save();
+
+    await ctx.reply(
+      `✅ Đã trừ ${amount} coin của ${target.username || target.telegramId}. Coin mới: ${target.topCoin}`,
+      { reply_to_message_id: ctx.message?.message_id }
+    );
+  });
+
+  // /resetcoin <user>
+  bot.command('resetcoin', async (ctx) => {
+    if (!await isAdmin(ctx.from.id)) {
+      return ctx.reply('Bạn không có quyền.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const parts = ctx.message.text.split(' ').filter(Boolean);
+    const userArg = parts[1];
+
+    if (!userArg) {
+      return ctx.reply('Dùng: /resetcoin <telegramId|@username>',
+        { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const target = await findUserByArg(userArg);
+    if (!target) {
+      return ctx.reply('Không tìm thấy user.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    target.topCoin = 0;
+    await target.save();
+
+    await ctx.reply(
+      `✅ Đã reset coin của ${target.username || target.telegramId} về 0.`,
+      { reply_to_message_id: ctx.message?.message_id }
+    );
+  });
+
+  // /resetcoin_all – reset coin toàn bộ
+  bot.command('resetcoin_all', async (ctx) => {
+    if (!await isAdmin(ctx.from.id)) {
+      return ctx.reply('Bạn không có quyền.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    await User.updateMany({}, { topCoin: 0 });
+
+    await ctx.reply(
+      '✅ Đã reset coin của toàn bộ user về 0.',
+      { reply_to_message_id: ctx.message?.message_id }
+    );
+  });
+
+  // /removexp <user> <số lượng>
+  bot.command('removexp', async (ctx) => {
+    if (!await isAdmin(ctx.from.id)) {
+      return ctx.reply('Bạn không có quyền.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const parts = ctx.message.text.split(' ').filter(Boolean);
+    const userArg = parts[1];
+    const amountStr = parts[2];
+
+    if (!userArg || !amountStr) {
+      return ctx.reply(
+        'Dùng: /removexp <telegramId|@username> <số lượng>',
+        { reply_to_message_id: ctx.message?.message_id }
+      );
+    }
+
+    const amount = Number(amountStr);
+    if (isNaN(amount) || amount <= 0) {
+      return ctx.reply('Số lượng không hợp lệ.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const target = await findUserByArg(userArg);
+    if (!target) {
+      return ctx.reply('Không tìm thấy user.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    target.totalXP = Math.max(0, (target.totalXP || 0) - amount);
+    target.dayXP   = Math.max(0, (target.dayXP   || 0) - amount);
+    target.weekXP  = Math.max(0, (target.weekXP  || 0) - amount);
+    target.monthXP = Math.max(0, (target.monthXP || 0) - amount);
+
+    await target.save();
+
+    const level = calcLevel(target.totalXP);
+
+    await ctx.reply(
+      `✅ Đã trừ ${amount} XP của ${target.username || target.telegramId}.\n` +
+      `XP mới: ${target.totalXP} • Level: ${level}`,
+      { reply_to_message_id: ctx.message?.message_id }
+    );
+  });
+
+  // /resetxp <user>
+  bot.command('resetxp', async (ctx) => {
+    if (!await isAdmin(ctx.from.id)) {
+      return ctx.reply('Bạn không có quyền.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const parts = ctx.message.text.split(' ').filter(Boolean);
+    const userArg = parts[1];
+
+    if (!userArg) {
+      return ctx.reply('Dùng: /resetxp <telegramId|@username>',
+        { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const target = await findUserByArg(userArg);
+    if (!target) {
+      return ctx.reply('Không tìm thấy user.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    target.totalXP = 0;
+    target.dayXP   = 0;
+    target.weekXP  = 0;
+    target.monthXP = 0;
+
+    await target.save();
+
+    await ctx.reply(
+      `✅ Đã reset XP của ${target.username || target.telegramId} về 0.`,
+      { reply_to_message_id: ctx.message?.message_id }
+    );
+  });
+
+  // /resetxp_all – reset XP toàn bộ
+  bot.command('resetxp_all', async (ctx) => {
+    if (!await isAdmin(ctx.from.id)) {
+      return ctx.reply('Bạn không có quyền.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    await User.updateMany({}, {
+      totalXP: 0,
+      dayXP: 0,
+      weekXP: 0,
+      monthXP: 0
+    });
+
+    await ctx.reply(
+      '✅ Đã reset XP của toàn bộ user về 0.',
+      { reply_to_message_id: ctx.message?.message_id }
+    );
+  });
+
+  // /ban <user>
+  bot.command('ban', async (ctx) => {
+    if (!await isAdmin(ctx.from.id)) {
+      return ctx.reply('Bạn không có quyền.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const parts = ctx.message.text.split(' ').filter(Boolean);
+    const userArg = parts[1];
+
+    if (!userArg) {
+      return ctx.reply('Dùng: /ban <telegramId|@username>',
+        { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const target = await findUserByArg(userArg);
+    if (!target) {
+      return ctx.reply('Không tìm thấy user.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
     target.banned = true;
     await target.save();
 
@@ -447,47 +632,58 @@ export default (bot) => {
     }
 
     await ctx.reply(
-      `Đã ban ${target.username || target.telegramId}`,
+      `✅ Đã ban ${target.username || target.telegramId}`,
       { reply_to_message_id: ctx.message?.message_id }
     );
   });
 
+  // /unban <user>
   bot.command('unban', async (ctx) => {
     if (!await isAdmin(ctx.from.id)) {
       return ctx.reply('Bạn không có quyền.', { reply_to_message_id: ctx.message?.message_id });
     }
+
     const parts = ctx.message.text.split(' ').filter(Boolean);
     const userArg = parts[1];
+
     if (!userArg) {
-      return ctx.reply('Dùng: /unban <telegramId|@username>', { reply_to_message_id: ctx.message?.message_id });
+      return ctx.reply('Dùng: /unban <telegramId|@username>',
+        { reply_to_message_id: ctx.message?.message_id });
     }
 
     const target = await findUserByArg(userArg);
     if (!target) {
       return ctx.reply('Không tìm thấy user.', { reply_to_message_id: ctx.message?.message_id });
     }
+
     target.banned = false;
     await target.save();
+
     await ctx.reply(
-      `Đã unban ${target.username || target.telegramId}`,
+      `✅ Đã unban ${target.username || target.telegramId}`,
       { reply_to_message_id: ctx.message?.message_id }
     );
   });
 
+  // /mute <user>
   bot.command('mute', async (ctx) => {
     if (!await isAdmin(ctx.from.id)) {
       return ctx.reply('Bạn không có quyền.', { reply_to_message_id: ctx.message?.message_id });
     }
+
     const parts = ctx.message.text.split(' ').filter(Boolean);
     const userArg = parts[1];
+
     if (!userArg) {
-      return ctx.reply('Dùng: /mute <telegramId|@username>', { reply_to_message_id: ctx.message?.message_id });
+      return ctx.reply('Dùng: /mute <telegramId|@username>',
+        { reply_to_message_id: ctx.message?.message_id });
     }
 
     const target = await findUserByArg(userArg);
     if (!target) {
       return ctx.reply('Không tìm thấy user.', { reply_to_message_id: ctx.message?.message_id });
     }
+
     target.muted = true;
     await target.save();
 
@@ -502,25 +698,30 @@ export default (bot) => {
     }
 
     await ctx.reply(
-      `Đã mute ${target.username || target.telegramId}`,
+      `✅ Đã mute ${target.username || target.telegramId}`,
       { reply_to_message_id: ctx.message?.message_id }
     );
   });
 
+  // /unmute <user>
   bot.command('unmute', async (ctx) => {
     if (!await isAdmin(ctx.from.id)) {
       return ctx.reply('Bạn không có quyền.', { reply_to_message_id: ctx.message?.message_id });
     }
+
     const parts = ctx.message.text.split(' ').filter(Boolean);
     const userArg = parts[1];
+
     if (!userArg) {
-      return ctx.reply('Dùng: /unmute <telegramId|@username>', { reply_to_message_id: ctx.message?.message_id });
+      return ctx.reply('Dùng: /unmute <telegramId|@username>',
+        { reply_to_message_id: ctx.message?.message_id });
     }
 
     const target = await findUserByArg(userArg);
     if (!target) {
       return ctx.reply('Không tìm thấy user.', { reply_to_message_id: ctx.message?.message_id });
     }
+
     target.muted = false;
     await target.save();
 
@@ -538,15 +739,17 @@ export default (bot) => {
     }
 
     await ctx.reply(
-      `Đã unmute ${target.username || target.telegramId}`,
+      `✅ Đã unmute ${target.username || target.telegramId}`,
       { reply_to_message_id: ctx.message?.message_id }
     );
   });
 
+  // /rewards – xem danh sách reward pending
   bot.command('rewards', async (ctx) => {
     if (!await isAdmin(ctx.from.id)) {
       return ctx.reply('Bạn không có quyền.', { reply_to_message_id: ctx.message?.message_id });
     }
+
     const rewards = await Reward.find({ status: 'pending' }).populate('userId');
     if (!rewards.length) {
       return ctx.reply('Không có reward pending.', { reply_to_message_id: ctx.message?.message_id });
@@ -558,15 +761,19 @@ export default (bot) => {
       const name = u.username ? '@' + u.username : (u.telegramId || 'unknown');
       txt += `ID: ${r._id} – ${r.type} – của ${name}\n`;
     });
+
     await ctx.reply(txt, { reply_to_message_id: ctx.message?.message_id });
   });
 
+  // /approve <rewardId> – duyệt reward
   bot.command('approve', async (ctx) => {
     if (!await isAdmin(ctx.from.id)) {
       return ctx.reply('Bạn không có quyền.', { reply_to_message_id: ctx.message?.message_id });
     }
+
     const parts = ctx.message.text.split(' ').filter(Boolean);
     const id = parts[1];
+
     if (!id) {
       return ctx.reply('Dùng: /approve <rewardId>', { reply_to_message_id: ctx.message?.message_id });
     }
@@ -575,8 +782,9 @@ export default (bot) => {
     if (!r) {
       return ctx.reply('Reward không tồn tại.', { reply_to_message_id: ctx.message?.message_id });
     }
+
     r.status = 'claimed';
     await r.save();
-    await ctx.reply('Đã duyệt reward.', { reply_to_message_id: ctx.message?.message_id });
+
+    await ctx.reply('✅ Đã duyệt reward.', { reply_to_message_id: ctx.message?.message_id });
   });
-};
