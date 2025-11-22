@@ -1,3 +1,4 @@
+// commands/index.js
 import User from '../models/User.js';
 import Reward from '../models/Reward.js';
 import config from '../config/config.js';
@@ -5,10 +6,10 @@ import { calcLevel } from '../utils/xp.js';
 
 // ✅ ADMIN MẶC ĐỊNH – TELEGRAM ID CỦA BẠN
 const DEFAULT_ADMINS = [
-  5589888565 // sửa thành ID của bạn nếu khác
+  5589888565 // sửa nếu ID bạn khác
 ];
 
-// helper: key ngày YYYY-MM-DD (dùng cho daily/claimdaily)
+// helper: key ngày YYYY-MM-DD
 function getDayKey(date = new Date()) {
   return date.toISOString().slice(0, 10);
 }
@@ -38,7 +39,6 @@ async function isAdmin(userId) {
   const u = await User.findOne({ telegramId: userId });
   return u && u.role === 'admin';
 }
-
 
 export default (bot) => {
   // /start
@@ -342,7 +342,7 @@ export default (bot) => {
     );
   });
 
-   // ================= ADMIN PACK =================
+  // ================= ADMIN PACK =================
 
   // /addadmin <telegramId>
   bot.command('addadmin', async (ctx) => {
@@ -788,3 +788,4 @@ export default (bot) => {
 
     await ctx.reply('✅ Đã duyệt reward.', { reply_to_message_id: ctx.message?.message_id });
   });
+};
