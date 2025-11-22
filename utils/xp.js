@@ -1,22 +1,23 @@
-// utils/xp.js
 import User from '../models/User.js';
 import config from '../config/config.js';
 
+// Tính key ngày: YYYY-MM-DD
 function getDayKey(date = new Date()) {
-  return date.toISOString().slice(0, 10); // YYYY-MM-DD
+  return date.toISOString().slice(0, 10);
 }
 
+// Tính key phút: YYYY-MM-DDTHH:MM
 function getMinuteKey(date = new Date()) {
-  return date.toISOString().slice(0, 16); // YYYY-MM-DDTHH:MM
+  return date.toISOString().slice(0, 16);
 }
 
-// Tính level theo công thức: Level = floor( sqrt(XP / 5) )
-function calcLevel(xp) {
+// Hàm tính level theo XP
+export function calcLevel(xp) {
   const lv = Math.floor(Math.sqrt(xp / 5));
   return lv < 1 ? 1 : lv;
 }
 
-// Thêm cảnh cáo spam, đủ 3 lần thì auto mute
+// Thêm cảnh cáo spam – sau 3 lần thì auto mute
 async function addWarning(user, ctx) {
   user.warnCount += 1;
   user.lastWarnAt = new Date();
@@ -27,7 +28,6 @@ async function addWarning(user, ctx) {
   if (user.warnCount >= 3 && !user.muted) {
     user.muted = true;
     actionText = '\nBạn đã bị mute vì spam. Liên hệ admin nếu cần mở.';
-
     try {
       if (ctx.chat && (ctx.chat.type === 'group' || ctx.chat.type === 'supergroup')) {
         await ctx.telegram.restrictChatMember(ctx.chat.id, user.telegramId, {
@@ -51,9 +51,9 @@ async function addWarning(user, ctx) {
   }
 }
 
+// Middleware chính
 export default async (ctx, next) => {
   if (!ctx.message) return next();
-
   const msg = ctx.message;
   const from = msg.from;
   if (!from || from.is_bot) return next();
@@ -61,7 +61,7 @@ export default async (ctx, next) => {
   const text = msg.text || msg.caption || '';
   if (!text) return next();
 
-  // Chỉ xử lý trong group / supergroup
+  // Chỉ tính XP trong group / supergroup
   if (!msg.chat || (msg.chat.type !== 'group' && msg.chat.type !== 'supergroup')) {
     return next();
   }
@@ -69,7 +69,6 @@ export default async (ctx, next) => {
   const now = new Date();
   const trimmed = text.trim();
 
-  // Lấy hoặc tạo user trong DB
   let user = await User.findOne({ telegramId: from.id });
   if (!user) {
     user = await User.create({
@@ -82,7 +81,7 @@ export default async (ctx, next) => {
 
   // ========== ANTI-SPAM ==========
 
-  // 1) Lặp y chang tin trước trong 3 giây => cảnh cáo
+  // 1) Lặp y chang tin trước trong vòng 3 giây → cảnh cáo
   if (user.lastMessageText === trimmed && user.lastMessageAt) {
     const diffSec = (now - user.lastMessageAt) / 1000;
     if (diffSec <= 3) {
@@ -93,7 +92,7 @@ export default async (ctx, next) => {
     }
   }
 
-  // 2) Flood: quá nhiều tin trong khoảng thời gian ngắn
+  // 2) Flood control: quá nhiều tin trong cửa sổ ngắn
   const windowSec = config.spam?.windowSeconds || 10;
   const maxMsgs = config.spam?.maxMsgsPerWindow || 7;
 
@@ -105,7 +104,7 @@ export default async (ctx, next) => {
     if (diffSec <= windowSec) {
       user.spamCount += 1;
     } else {
-      // Reset cửa sổ đếm spam
+      // Reset cửa sổ
       user.spamWindowStart = now;
       user.spamCount = 1;
     }
@@ -119,7 +118,7 @@ export default async (ctx, next) => {
     return next();
   }
 
-  // Nếu đã bị mute → không cộng XP nữa
+  // Nếu đã bị mute thì không cộng XP nữa
   if (user.muted) {
     user.lastMessageText = trimmed;
     user.lastMessageAt = now;
@@ -155,7 +154,7 @@ export default async (ctx, next) => {
   const minuteLimit = config.xp?.minuteLimit ?? 5;
   const dailyLimit = config.xp?.dailyLimit ?? 100;
 
-  // Nếu đã full limit thì không cộng nữa
+  // Nếu đã đạt giới hạn thì không cộng
   if (user.minuteXP >= minuteLimit || user.dayXP >= dailyLimit) {
     user.lastMessageText = trimmed;
     user.lastMessageAt = now;
@@ -163,10 +162,10 @@ export default async (ctx, next) => {
     return next();
   }
 
-  // XP mỗi tin
+  // XP mỗi tin: >50 ký tự = 2, còn lại = 1
   let gain = trimmed.length > 50 ? 2 : 1;
 
-  // Không cho vượt quá limit
+  // Đảm bảo không vượt quá giới hạn phút/ngày khi cộng
   const possibleMinute = Math.max(0, minuteLimit - user.minuteXP);
   const possibleDay = Math.max(0, dailyLimit - user.dayXP);
   const canGain = Math.min(gain, possibleMinute, possibleDay);
@@ -178,9 +177,9 @@ export default async (ctx, next) => {
     return next();
   }
 
-  // ===== Trước khi cộng XP: lưu lại level cũ =====
-  const oldTotalXP = user.totalXP;
-  const oldLevel = calcLevel(oldTotalXP);
+  // ===== LEVEL UP + THƯỞNG COIN (A + B) =====
+
+  const oldLevel = calcLevel(user.totalXP); // Level trước khi cộng XP
 
   // Cộng XP
   user.totalXP += canGain;
@@ -189,22 +188,20 @@ export default async (ctx, next) => {
   user.monthXP += canGain;
   user.minuteXP += canGain;
 
-  user.lastMessageText = trimmed;
-  user.lastMessageAt = now;
+  const newLevel = calcLevel(user.totalXP); // Level sau khi cộng XP
 
-  // ===== Sau khi cộng: check lên level & thưởng coin =====
-  const newLevel = calcLevel(user.totalXP);
-
+  // Nếu có lên level
   if (newLevel > oldLevel) {
     const levelUp = newLevel - oldLevel;
 
-    // Kiểu B: thưởng coin mỗi level
-    const coinPerLevel = 10;
+    // B) Thưởng coin cho mỗi level tăng
+    const coinPerLevel = 2; // chỉnh được
     let totalBonus = levelUp * coinPerLevel;
+    user.topCoin += totalBonus;
 
-    // Kiểu A: thưởng mốc level
+    // A) Thưởng mốc level lớn
     const milestoneRewards = {
-      5: 30,
+      5: 20,
       10: 40,
       20: 60,
       30: 80,
@@ -215,25 +212,29 @@ export default async (ctx, next) => {
     };
 
     if (milestoneRewards[newLevel]) {
-      totalBonus += milestoneRewards[newLevel];
+      const milestoneCoin = milestoneRewards[newLevel];
+      user.topCoin += milestoneCoin;
+      totalBonus += milestoneCoin;
     }
 
-    user.topCoin += totalBonus;
-
-    // Thông báo lên level
     try {
       await ctx.reply(
         `🎉 Bạn đã lên Level ${newLevel}!\n` +
         `+${levelUp * coinPerLevel} coin (thưởng lên level)\n` +
         (milestoneRewards[newLevel]
-          ? `+${milestoneRewards[newLevel]} coin (mốc Level ${newLevel})`
-          : ''),
+          ? `+${milestoneRewards[newLevel]} coin (mốc Level ${newLevel})\n`
+          : '') +
+        `Tổng coin thưởng: +${totalBonus} coin`,
         { reply_to_message_id: ctx.message?.message_id }
       );
     } catch (e) {
-      console.log('Level up reply error:', e.message);
+      console.log('Reply level up error:', e.message);
     }
   }
+
+  // Lưu lại tin nhắn gần nhất
+  user.lastMessageText = trimmed;
+  user.lastMessageAt = now;
 
   await user.save();
   return next();
