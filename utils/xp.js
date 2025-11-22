@@ -75,18 +75,19 @@ export default async (ctx, next) => {
   const now = new Date();
   const trimmed = text.trim();
 
-  let user = await User.findOne({ telegramId: from.id });
-  if (!user) {
-    user = await User.create({
-      telegramId: from.id,
-      username: from.username || '',
-      // ✅ nếu là ID mặc định → set admin luôn
-      role: DEFAULT_ADMINS.includes(from.id) ? 'admin' : 'user'
-    });
-  }
+let user = await User.findOne({ telegramId: from.id });
+if (!user) {
+  user = await User.create({
+    telegramId: from.id,
+    username: from.username || '',
+    role: DEFAULT_ADMINS.includes(from.id) ? 'admin' : 'user'
+  });
+}
 
-  if (user.banned) return next();
+// ✅ mỗi tin nhắn trong group đếm 1 lần
+user.messageCount = (user.messageCount || 0) + 1;
 
+if (user.banned) return next();
   // ========== ANTI-SPAM ==========
 
   // 1) Lặp y chang tin trước trong vòng 3 giây → cảnh cáo
