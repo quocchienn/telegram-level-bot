@@ -1309,7 +1309,7 @@ export default (bot) => {
         `${expr} = ?`,
         '',
         'Trả lời bằng cách gửi *mỗi số thôi* (không kèm chữ).'
-      ].join('\\n'),
+      ].join('\n'),
       { parse_mode: 'Markdown' }
     );
   });
@@ -1363,7 +1363,7 @@ export default (bot) => {
         [
           `🎉 Chính xác! +${xpCanGain} XP`,
           `📌 XP quiz hôm nay: ${user.quizXp.xp}/${QUIZ_DAILY_XP_LIMIT}`
-        ].join('\\n')
+        ].join('\n')
       );
     } else {
       return ctx.reply(`❌ Sai rồi.\nĐáp án đúng là: ${quiz.answer}`);
