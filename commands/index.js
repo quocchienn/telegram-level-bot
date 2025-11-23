@@ -57,6 +57,7 @@ export default (bot) => {
   });
 
   // /me – info user
+    // /me – info user
   bot.command('me', async (ctx) => {
     let u = await User.findOne({ telegramId: ctx.from.id });
     if (!u) {
@@ -65,24 +66,25 @@ export default (bot) => {
         { reply_to_message_id: ctx.message?.message_id }
       );
     }
-    const level = calcLevel(u.totalXP);
+
+    const level = calcLevel(u.totalXP || 0);
     const nextLevel = level + 1;
     const xpNextLevel = 5 * nextLevel * nextLevel;
-    const need = Math.max(0, xpNextLevel - u.totalXP);
+    const need = Math.max(0, xpNextLevel - (u.totalXP || 0));
 
- await ctx.reply(
-  [
-    '📊 Thông tin của bạn:',
-    `• Level hiện tại: ${level}`,
-    `• XP hiện tại: ${u.totalXP}`,
-    `• Còn thiếu: ${need} XP để lên Level ${nextLevel}`,
-    `• Coin: ${u.topCoin}`,
-    `• Tuần: ${u.weekXP} XP • Tháng: ${u.monthXP} XP`,
-    `• Tổng số tin nhắn đã gửi: ${u.messageCount || 0}`
-  ].join('\n'),
-  { reply_to_message_id: ctx.message?.message_id }
-);
-
+    await ctx.reply(
+      [
+        '📊 Thông tin của bạn:',
+        `• Level hiện tại: ${level}`,
+        `• XP hiện tại: ${u.totalXP || 0}`,
+        `• Còn thiếu: ${need} XP để lên Level ${nextLevel}`,
+        `• Coin: ${u.topCoin || 0}`,
+        `• Tuần: ${u.weekXP || 0} XP • Tháng: ${u.monthXP || 0} XP`,
+        `• Tổng số tin nhắn đã gửi: ${u.messageCount || 0}`
+      ].join('\n'),
+      { reply_to_message_id: ctx.message?.message_id }
+    );
+  });
   // ================= TOP =================
 
   bot.command('top', async (ctx) => {
