@@ -1183,14 +1183,15 @@ export default (bot) => {
   bot.command('shield', async (ctx) => handleDuelChoice(ctx, 'shield'));
   bot.command('dodge', async (ctx) => handleDuelChoice(ctx, 'dodge'));
 
-  // ========== QUIZ NÂNG CAO (NHIỀU BƯỚC, CÓ THỜI GIAN, CÓ TRỪ ĐIỂM) ==========
+   // ========== QUIZ NÂNG CAO (NHIỀU BƯỚC, CÓ THỜI GIAN, CÓ TRỪ ĐIỂM) ==========
+
   const quizzes = new Map(); // key: telegramId -> { answer, expr, expiresAt, chatId }
 
   const QUIZ_DAILY_XP_LIMIT = 200; // tối đa XP cộng từ quiz mỗi ngày
   const QUIZ_GAIN_XP = 10;         // XP thưởng mỗi câu đúng
   const QUIZ_PENALTY_XP = 5;       // XP phạt khi sai/hết giờ
   const QUIZ_PENALTY_COINS = 5;    // coin phạt khi sai/hết giờ
-  const QUIZ_TIMEOUT_MS = 20000;   // 30 giây
+  const QUIZ_TIMEOUT_MS = 30000;   // 30 giây
 
   function generateQuizByLevel(level) {
     // level thấp: phép đơn giản
@@ -1248,7 +1249,7 @@ export default (bot) => {
       return { expr, answer };
     }
 
-    // level cao: biểu thức nhiều bước, có ngoặc, nhân/chia nặng hơn
+    // level cao: biểu thức nhiều bước, có ngoặc, nhân/chia
     const pattern = Math.floor(Math.random() * 4); // 0..3
     let a, b, c, d, expr, answer;
 
@@ -1285,10 +1286,9 @@ export default (bot) => {
         answer = a * b - (c + d);
         break;
 
-      default: // (a * b) ÷ c  + d  (chia ra số nguyên)
-        c = Math.floor(Math.random() * 9) + 2; // 2..10
+      default: // (b ÷ c) + d  (chia ra số nguyên)
+        c = Math.floor(Math.random() * 9) + 2;      // 2..10
         const tmp = Math.floor(Math.random() * 10) + 2; // 2..11
-        a = Math.floor(Math.random() * 10) + 2;
         b = c * tmp; // để (b ÷ c) = tmp
         d = Math.floor(Math.random() * 20) + 1;
         expr = `(${b} ÷ ${c}) + ${d}`;
@@ -1299,8 +1299,8 @@ export default (bot) => {
     return { expr, answer };
   }
 
-  async function applyQuizPenalty(bot, user, chatId, reasonText) {
-    // trừ XP (không âm)
+  // dùng trực tiếp biến `bot` ở ngoài, không dùng ctx.bot nữa
+  async function applyQuizPenalty(user, chatId, reasonText) {
     const beforeXP = user.totalXP || 0;
     const xpLoss = Math.min(QUIZ_PENALTY_XP, beforeXP);
 
@@ -1309,7 +1309,6 @@ export default (bot) => {
     user.weekXP  = Math.max(0, (user.weekXP  || 0) - xpLoss);
     user.monthXP = Math.max(0, (user.monthXP || 0) - xpLoss);
 
-    // trừ coin (không âm)
     const beforeCoin = user.topCoin || 0;
     const coinLoss = Math.min(QUIZ_PENALTY_COINS, beforeCoin);
     user.topCoin = beforeCoin - coinLoss;
@@ -1335,7 +1334,6 @@ export default (bot) => {
 
     const today = new Date().toISOString().slice(0, 10);
 
-    // log XP từ quiz
     if (!user.quizXp) {
       user.quizXp = { date: today, xp: 0 };
     }
@@ -1364,14 +1362,13 @@ export default (bot) => {
       const current = quizzes.get(from.id);
       if (!current) return; // đã trả lời rồi
 
-      // đã hết hạn?
       if (current.expiresAt <= Date.now()) {
         quizzes.delete(from.id);
 
         const u = await User.findOne({ telegramId: from.id });
         if (!u) return;
 
-        await applyQuizPenalty(ctx.bot, u, current.chatId, '⏱ Hết thời gian trả lời /quiz.');
+        await applyQuizPenalty(u, current.chatId, '⏱ Hết thời gian trả lời /quiz.');
       }
     }, QUIZ_TIMEOUT_MS + 500);
 
@@ -1414,13 +1411,13 @@ export default (bot) => {
       user.quizXp = { date: today, xp: 0 };
     }
 
-    // hết thời gian nhưng vẫn trả lời -> tính là timeout + phạt
+    // nếu đã hết thời gian mà vẫn trả lời → tính là timeout + phạt
     if (Date.now() > quiz.expiresAt) {
-      await applyQuizPenalty(ctx.bot, user, ctx.chat.id, '⏱ Bạn trả lời quá trễ.');
+      await applyQuizPenalty(user, ctx.chat.id, '⏱ Bạn trả lời quá trễ.');
       return;
     }
 
-    // nếu đã chạm limit XP cộng thì không thưởng nữa nhưng vẫn không phạt thêm
+    // trả lời đúng
     if (val === quiz.answer) {
       if (user.quizXp.xp >= QUIZ_DAILY_XP_LIMIT) {
         return ctx.reply(`🚫 Bạn đã đạt giới hạn ${QUIZ_DAILY_XP_LIMIT} XP từ /quiz trong hôm nay.`);
@@ -1446,11 +1443,13 @@ export default (bot) => {
           `📌 XP quiz hôm nay: ${user.quizXp.xp}/${QUIZ_DAILY_XP_LIMIT}`
         ].join('\n')
       );
-    } else {
-      await applyQuizPenalty(ctx.bot, user, ctx.chat.id, '❌ Bạn trả lời sai /quiz.');
-      return;
     }
+
+    // trả lời sai
+    await applyQuizPenalty(user, ctx.chat.id, '❌ Bạn trả lời sai /quiz.');
+    return;
   });
+
   // ================== MINI GAME: /race /hunt /steal ==================
 
   // /RACE – ĐUA XE CÓ CƯỢC
@@ -1704,6 +1703,162 @@ export default (bot) => {
       return ctx.reply(text, { reply_to_message_id: ctx.message?.message_id });
     }
   });
+  // ====== STATE CHO GAME TÀI/XỈU ======
+const taiXiuSessions = new Map(); // key: telegramId -> { bet, chatId }
+
+// ========== /TAIXIU – ĐẶT CƯỢC VÀ CHỌN CỬA ==========
+bot.command('taixiu', async (ctx) => {
+  const from = ctx.from;
+  if (!from) return;
+
+  const parts = ctx.message.text.split(' ').filter(Boolean);
+  const bet = Number(parts[1]);
+
+  if (isNaN(bet) || bet <= 0) {
+    return ctx.reply('Dùng: /taixiu <coin_cược>', {
+      reply_to_message_id: ctx.message?.message_id
+    });
+  }
+
+  const user = await User.findOne({ telegramId: from.id });
+  if (!user) {
+    return ctx.reply('Bạn chưa có dữ liệu, hãy chat trong group trước.', {
+      reply_to_message_id: ctx.message?.message_id
+    });
+  }
+
+  if ((user.topCoin || 0) < bet) {
+    return ctx.reply('Bạn không đủ coin để cược.', {
+      reply_to_message_id: ctx.message?.message_id
+    });
+  }
+
+  // lưu phiên chơi
+  taiXiuSessions.set(from.id, {
+    bet,
+    chatId: ctx.chat.id
+  });
+
+  const keyboard = {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: 'Tài (11–17)', callback_data: 'taixiu:tai' },
+          { text: 'Xỉu (4–10)', callback_data: 'taixiu:xiu' }
+        ],
+        [
+          { text: 'Chẵn', callback_data: 'taixiu:chan' },
+          { text: 'Lẻ',  callback_data: 'taixiu:le' }
+        ]
+      ]
+    }
+  };
+
+  await ctx.reply(
+    `🎲 Bạn cược *${bet} coin*.\nChọn cửa muốn đặt:`,
+    { parse_mode: 'Markdown', ...keyboard }
+  );
+});
+
+// ========== XỬ LÝ KẾT QUẢ TÀI/XỈU (CALLBACK) ==========
+bot.on('callback_query', async (ctx) => {
+  const cb = ctx.callbackQuery;
+  const data = cb?.data || '';
+  const from = ctx.from;
+  if (!from) {
+    return ctx.answerCbQuery();
+  }
+
+  // chỉ xử lý callback bắt đầu bằng 'taixiu:'
+  if (!data.startsWith('taixiu:')) {
+    return ctx.answerCbQuery();
+  }
+
+  const choice = data.split(':')[1]; // tai | xiu | chan | le
+  await ctx.answerCbQuery(); // tắt loading trên nút
+
+  const session = taiXiuSessions.get(from.id);
+  if (!session) {
+    return ctx.reply('⚠️ Bạn chưa đặt cược /taixiu hoặc phiên đã hết, hãy gõ lại lệnh.', {
+      reply_to_message_id: cb.message?.message_id
+    });
+  }
+
+  taiXiuSessions.delete(from.id);
+
+  const user = await User.findOne({ telegramId: from.id });
+  if (!user) {
+    return ctx.reply('Bạn chưa có dữ liệu trong hệ thống.', {
+      reply_to_message_id: cb.message?.message_id
+    });
+  }
+
+  const bet = session.bet;
+  if ((user.topCoin || 0) < bet) {
+    return ctx.reply('Bạn không đủ coin để hoàn tất ván này, cược bị hủy.', {
+      reply_to_message_id: cb.message?.message_id
+    });
+  }
+
+  // NÉM 3 XÚC XẮC
+  const rollDie = () => Math.floor(Math.random() * 6) + 1;
+  const diceToIcon = (v) => ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'][v - 1];
+
+  const d1 = rollDie();
+  const d2 = rollDie();
+  const d3 = rollDie();
+  const sum = d1 + d2 + d3;
+
+  const iconLine = `${diceToIcon(d1)} ${diceToIcon(d2)} ${diceToIcon(d3)}`;
+  const isTai  = sum >= 11;
+  const isXiu  = sum <= 10;
+  const isChan = sum % 2 === 0;
+  const isLe   = !isChan;
+
+  let resultText = `🎲 KẾT QUẢ TÀI/XỈU\n${iconLine} = ${sum}\n\n`;
+
+  let win = false;
+
+  if (choice === 'tai'  && isTai)  win = true;
+  if (choice === 'xiu'  && isXiu)  win = true;
+  if (choice === 'chan' && isChan) win = true;
+  if (choice === 'le'   && isLe)   win = true;
+
+  const choiceLabel = {
+    tai: 'Tài',
+    xiu: 'Xỉu',
+    chan: 'Chẵn',
+    le: 'Lẻ'
+  }[choice] || 'Không rõ';
+
+  resultText += `Tổng: ${sum} → ${isTai ? 'Tài' : 'Xỉu'} • ${isChan ? 'Chẵn' : 'Lẻ'}\n`;
+  resultText += `Bạn chọn: *${choiceLabel}*\n\n`;
+
+  if (win) {
+    // lãi ≈ 1.8x tiền cược (vd 5 → 9 coin, không cộng vốn)
+    const profit = Math.floor(bet * 1.8);
+    user.topCoin = (user.topCoin || 0) + profit;
+    await user.save();
+
+    resultText +=
+      `✅ Bạn THẮNG! +${profit} coin (không tính lại tiền cược)\n` +
+      `💰 Coin hiện tại: ${user.topCoin}`;
+  } else {
+    const before = user.topCoin || 0;
+    const loss = Math.min(bet, before);
+    user.topCoin = before - loss;
+    await user.save();
+
+    resultText +=
+      `❌ Bạn THUA! -${loss} coin (mất tiền cược)\n` +
+      `💰 Coin hiện tại: ${user.topCoin}`;
+  }
+
+  await ctx.reply(resultText, {
+    parse_mode: 'Markdown',
+    reply_to_message_id: cb.message?.message_id
+  });
+});
   // ========== GỬI COIN ==========
   bot.command('send', async (ctx) => {
     const from = ctx.from;
