@@ -1,6 +1,7 @@
 // utils/xp.js
 import User from '../models/User.js';
 import config from '../config/config.js';
+import { ensureDailyMission, updateMissionProgress } from '../modules/missionSystem.js';
 
 // ✅ ADMIN MẶC ĐỊNH – TELEGRAM ID CỦA BẠN
 const DEFAULT_ADMINS = [
@@ -86,6 +87,10 @@ if (!user) {
 
 // ✅ mỗi tin nhắn trong group đếm 1 lần
 user.messageCount = (user.messageCount || 0) + 1;
+
+// nhiệm vụ ngày
+await ensureDailyMission(user._id);
+await updateMissionProgress(user, ctx);
 
 if (user.banned) return next();
   // ========== ANTI-SPAM ==========

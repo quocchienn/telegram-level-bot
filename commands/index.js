@@ -3,6 +3,10 @@ import User from '../models/User.js';
 import Reward from '../models/Reward.js';
 import config from '../config/config.js';
 import { calcLevel } from '../utils/xp.js';
+import Mission from '../models/Mission.js';
+import Team from '../models/Team.js';
+import { missionPool } from '../config/missions.js';
+import { getTitles } from '../utils/badges.js';
 
 // ✅ ADMIN MẶC ĐỊNH – TELEGRAM ID CỦA BẠN
 const DEFAULT_ADMINS = [
@@ -80,7 +84,8 @@ export default (bot) => {
         `• Còn thiếu: ${need} XP để lên Level ${nextLevel}`,
         `• Coin: ${u.topCoin || 0}`,
         `• Tuần: ${u.weekXP || 0} XP • Tháng: ${u.monthXP || 0} XP`,
-        `• Tổng số tin nhắn đã gửi: ${u.messageCount || 0}`
+        `• Tổng số tin nhắn đã gửi: ${u.messageCount || 0}`,
+        `• Danh hiệu: ${getTitles(u, level).join(', ')}`
       ].join('\n'),
       { reply_to_message_id: ctx.message?.message_id }
     );
@@ -915,4 +920,490 @@ export default (bot) => {
       }
     );
   });
+
+  // ========== NHIỆM VỤ NGÀY THEO USER ==========
+  bot.command('nhiemvu_today', async (ctx) => {
+    try {
+      const from = ctx.from;
+      if (!from) return;
+
+      const user = await User.findOne({ telegramId: from.id });
+      if (!user) {
+        return ctx.reply('Bạn chưa có dữ liệu, hãy chat trong group trước.', { reply_to_message_id: ctx.message?.message_id });
+      }
+
+      const today = new Date().toISOString().slice(0, 10);
+      const mission = await Mission.findOne({ userId: user._id, dateKey: today });
+
+      if (!mission) {
+        return ctx.reply('Nhiệm vụ ngày chưa được tạo. Hãy thử chat 1 tin trong group.', { reply_to_message_id: ctx.message?.message_id });
+      }
+
+      const info = missionPool.find(x => x.type === mission.type);
+      const desc = info ? info.desc : 'Nhiệm vụ bí ẩn';
+
+      await ctx.reply(
+        [
+          '🎯 Nhiệm vụ hôm nay của bạn:',
+          '',
+          `• ${desc}`,
+          `• Tiến độ: ${mission.progress}/${mission.target}`,
+          `• Thưởng: +${mission.rewardXP} XP, +${mission.rewardCoin} coin`,
+          `• Trạng thái: ${mission.completed ? '✅ Hoàn thành' : '🕗 Chưa hoàn thành'}`
+        ].join('\n'),
+        { reply_to_message_id: ctx.message?.message_id }
+      );
+    } catch (e) {
+      console.log('nhiemvu_today error', e);
+      ctx.reply('Có lỗi xảy ra khi lấy nhiệm vụ.', { reply_to_message_id: ctx.message?.message_id });
+    }
+  });
+
+  // ========== MINI GAME ==========
+  // /roll – user vs bot
+  bot.command('roll', async (ctx) => {
+    const from = ctx.from;
+    if (!from) return;
+
+    const user = await User.findOne({ telegramId: from.id });
+    if (!user) {
+      return ctx.reply('Bạn chưa có dữ liệu, hãy chat trong group trước.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const userRoll = Math.floor(Math.random() * 100) + 1;
+    const botRoll = Math.floor(Math.random() * 100) + 1;
+
+    let result = '';
+    if (userRoll > botRoll) {
+      const gain = 20;
+      user.topCoin = (user.topCoin || 0) + gain;
+      await user.save();
+      result = `🎲 Bạn: ${userRoll} • Bot: ${botRoll}\n✅ Bạn thắng! +${gain} coin`;
+    } else if (userRoll < botRoll) {
+      const loss = 5;
+      user.topCoin = Math.max(0, (user.topCoin || 0) - loss);
+      await user.save();
+      result = `🎲 Bạn: ${userRoll} • Bot: ${botRoll}\n❌ Bạn thua! -${loss} coin`;
+    } else {
+      result = `🎲 Bạn: ${userRoll} • Bot: ${botRoll}\n⚖️ Hòa, không mất gì.`;
+    }
+
+    await ctx.reply(result, { reply_to_message_id: ctx.message?.message_id });
+  });
+
+  // Duel đơn giản – lưu trạng thái trong RAM (restart bot sẽ mất)
+  const duelRequests = new Map();
+
+  bot.command('duel', async (ctx) => {
+    const from = ctx.from;
+    if (!from) return;
+
+    const parts = ctx.message.text.split(' ').filter(Boolean);
+    const userArg = parts[1];
+    const amountStr = parts[2];
+
+    if (!userArg || !amountStr) {
+      return ctx.reply('Dùng: /duel @user <coin>', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const amount = Number(amountStr);
+    if (isNaN(amount) || amount <= 0) {
+      return ctx.reply('Số coin không hợp lệ.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const challenger = await User.findOne({ telegramId: from.id });
+    if (!challenger) {
+      return ctx.reply('Bạn chưa có dữ liệu.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    if ((challenger.topCoin || 0) < amount) {
+      return ctx.reply('Bạn không đủ coin để đặt cược.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const targetMention = userArg.startsWith('@') ? userArg.slice(1) : userArg.replace('@','');
+    const targetUser = await User.findOne({ username: targetMention });
+    if (!targetUser) {
+      return ctx.reply('Không tìm thấy đối thủ (theo username).', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    if ((targetUser.topCoin || 0) < amount) {
+      return ctx.reply('Đối thủ không đủ coin để tham gia.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    duelRequests.set(targetUser.telegramId, {
+      fromId: challenger.telegramId,
+      amount
+    });
+
+    await ctx.reply(
+      `⚔️ ${challenger.username || challenger.telegramId} thách đấu ${userArg} với cược ${amount} coin.\n` +
+      `${userArg} gõ /accept để chấp nhận.`,
+      { reply_to_message_id: ctx.message?.message_id }
+    );
+  });
+
+  bot.command('accept', async (ctx) => {
+    const from = ctx.from;
+    if (!from) return;
+
+    const req = duelRequests.get(from.id);
+    if (!req) {
+      return ctx.reply('Bạn không có lời thách đấu nào đang chờ.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const challenger = await User.findOne({ telegramId: req.fromId });
+    const target = await User.findOne({ telegramId: from.id });
+
+    if (!challenger || !target) {
+      duelRequests.delete(from.id);
+      return ctx.reply('Không tìm thấy người chơi.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const amount = req.amount;
+
+    if ((challenger.topCoin || 0) < amount || (target.topCoin || 0) < amount) {
+      duelRequests.delete(from.id);
+      return ctx.reply('Một trong hai người không đủ coin để tiếp tục.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const roll1 = Math.floor(Math.random() * 100) + 1;
+    const roll2 = Math.floor(Math.random() * 100) + 1;
+
+    let winner, loser;
+    if (roll1 > roll2) {
+      winner = challenger;
+      loser = target;
+    } else if (roll2 > roll1) {
+      winner = target;
+      loser = challenger;
+    } else {
+      duelRequests.delete(from.id);
+      return ctx.reply(
+        `⚖️ Hòa!\n${challenger.username || challenger.telegramId}: ${roll1}\n${target.username || target.telegramId}: ${roll2}`,
+        { reply_to_message_id: ctx.message?.message_id }
+      );
+    }
+
+    loser.topCoin -= amount;
+    winner.topCoin = (winner.topCoin || 0) + amount;
+
+    await loser.save();
+    await winner.save();
+
+    duelRequests.delete(from.id);
+
+    await ctx.reply(
+      `🎲 Kết quả duel:\n` +
+      `${challenger.username || challenger.telegramId}: ${roll1}\n` +
+      `${target.username || target.telegramId}: ${roll2}\n\n` +
+      `🏆 Người thắng: ${winner.username || winner.telegramId} (+${amount} coin)`,
+      { reply_to_message_id: ctx.message?.message_id }
+    );
+  });
+
+  // Quiz đơn giản
+  const quizSessions = new Map();
+
+  bot.command('quiz', async (ctx) => {
+    const from = ctx.from;
+    if (!from) return;
+
+    const a = Math.floor(Math.random() * 10) + 1;
+    const b = Math.floor(Math.random() * 10) + 1;
+    const correct = a + b;
+
+    const options = [correct];
+    while (options.length < 3) {
+      const v = correct + (Math.floor(Math.random() * 7) - 3);
+      if (!options.includes(v) && v > 0) options.push(v);
+    }
+    options.sort(() => Math.random() - 0.5);
+
+    quizSessions.set(from.id, { answer: correct });
+
+    const text = `🧠 Quiz nhanh:\n${a} + ${b} = ?`;
+
+    await ctx.reply(
+      text + '\n(Hãy trả lời bằng tin nhắn số đúng)',
+      { reply_to_message_id: ctx.message?.message_id }
+    );
+  });
+
+  // bắt mọi tin nhắn để check quiz answer
+  bot.on('text', async (ctx, next) => {
+    const from = ctx.from;
+    if (!from) return next();
+
+    const session = quizSessions.get(from.id);
+    if (!session) return next();
+
+    const val = Number((ctx.message.text || '').trim());
+    if (isNaN(val)) return next();
+
+    quizSessions.delete(from.id);
+
+    const user = await User.findOne({ telegramId: from.id });
+    if (!user) return next();
+
+    if (val === session.answer) {
+      const gainXP = 10;
+      const gainCoin = 5;
+      user.totalXP = (user.totalXP || 0) + gainXP;
+      user.dayXP = (user.dayXP || 0) + gainXP;
+      user.weekXP = (user.weekXP || 0) + gainXP;
+      user.monthXP = (user.monthXP || 0) + gainXP;
+      user.topCoin = (user.topCoin || 0) + gainCoin;
+      await user.save();
+
+      await ctx.reply(
+        `✅ Chính xác! +${gainXP} XP, +${gainCoin} coin`,
+        { reply_to_message_id: ctx.message?.message_id }
+      );
+    } else {
+      await ctx.reply(
+        `❌ Sai rồi. Đáp án đúng là ${session.answer}.`,
+        { reply_to_message_id: ctx.message?.message_id }
+      );
+    }
+
+    return next();
+  });
+
+  // ========== GỬI COIN ==========
+  bot.command('send', async (ctx) => {
+    const from = ctx.from;
+    if (!from) return;
+
+    const parts = ctx.message.text.split(' ').filter(Boolean);
+    const userArg = parts[1];
+    const amountStr = parts[2];
+
+    if (!userArg || !amountStr) {
+      return ctx.reply('Dùng: /send <@username|telegramId> <số coin>', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const amount = Number(amountStr);
+    if (isNaN(amount) || amount <= 0) {
+      return ctx.reply('Số coin không hợp lệ.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const sender = await User.findOne({ telegramId: from.id });
+    if (!sender) {
+      return ctx.reply('Bạn chưa có dữ liệu.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    if ((sender.topCoin || 0) < amount) {
+      return ctx.reply('Bạn không đủ coin.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    let target;
+    if (userArg.startsWith('@')) {
+      const uname = userArg.slice(1);
+      target = await User.findOne({ username: uname });
+    } else {
+      const idNum = Number(userArg);
+      if (!isNaN(idNum)) {
+        target = await User.findOne({ telegramId: idNum });
+      }
+    }
+
+    if (!target) {
+      return ctx.reply('Không tìm thấy người nhận.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    if (target.telegramId === sender.telegramId) {
+      return ctx.reply('Không thể tự gửi cho chính mình.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const feeRate = 0.05;
+    const fee = Math.floor(amount * feeRate);
+    const receive = amount - fee;
+
+    sender.topCoin -= amount;
+    target.topCoin = (target.topCoin || 0) + receive;
+
+    await sender.save();
+    await target.save();
+
+    await ctx.reply(
+      [
+        '💸 Giao dịch hoàn tất:',
+        `• Người gửi: ${sender.username || sender.telegramId}`,
+        `• Người nhận: ${target.username || target.telegramId}`,
+        `• Số coin gửi: ${amount}`,
+        `• Phí: ${fee}`,
+        `• Người nhận thực tế: ${receive}`
+      ].join('\n'),
+      { reply_to_message_id: ctx.message?.message_id }
+    );
+  });
+
+  // ========== TEAM / CLAN ==========
+  bot.command('createteam', async (ctx) => {
+    const from = ctx.from;
+    if (!from) return;
+
+    const parts = ctx.message.text.split(' ').slice(1);
+    const name = parts.join(' ').trim();
+
+    if (!name) {
+      return ctx.reply('Dùng: /createteam <tên team>', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    let user = await User.findOne({ telegramId: from.id });
+    if (!user) {
+      return ctx.reply('Bạn chưa có dữ liệu.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    if (user.teamId) {
+      return ctx.reply('Bạn đã thuộc 1 team, hãy /leaveteam trước.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const exist = await Team.findOne({ name });
+    if (exist) {
+      return ctx.reply('Tên team đã tồn tại.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const team = await Team.create({
+      name,
+      createdBy: user._id
+    });
+
+    user.teamId = team._id;
+    await user.save();
+
+    await ctx.reply(`✅ Đã tạo team "${name}" và bạn đã join.`, { reply_to_message_id: ctx.message?.message_id });
+  });
+
+  bot.command('jointeam', async (ctx) => {
+    const from = ctx.from;
+    if (!from) return;
+
+    const parts = ctx.message.text.split(' ').slice(1);
+    const name = parts.join(' ').trim();
+
+    if (!name) {
+      return ctx.reply('Dùng: /jointeam <tên team>', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    let user = await User.findOne({ telegramId: from.id });
+    if (!user) {
+      return ctx.reply('Bạn chưa có dữ liệu.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const team = await Team.findOne({ name });
+    if (!team) {
+      return ctx.reply('Không tìm thấy team.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    user.teamId = team._id;
+    await user.save();
+
+    await ctx.reply(`✅ Bạn đã gia nhập team "${name}".`, { reply_to_message_id: ctx.message?.message_id });
+  });
+
+  bot.command('leaveteam', async (ctx) => {
+    const from = ctx.from;
+    if (!from) return;
+
+    let user = await User.findOne({ telegramId: from.id });
+    if (!user) {
+      return ctx.reply('Bạn chưa có dữ liệu.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    if (!user.teamId) {
+      return ctx.reply('Bạn không thuộc team nào.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    user.teamId = null;
+    await user.save();
+
+    await ctx.reply('✅ Bạn đã rời khỏi team.', { reply_to_message_id: ctx.message?.message_id });
+  });
+
+  bot.command('team', async (ctx) => {
+    const from = ctx.from;
+    if (!from) return;
+
+    let user = await User.findOne({ telegramId: from.id }).populate('teamId');
+    if (!user) {
+      return ctx.reply('Bạn chưa có dữ liệu.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    if (!user.teamId) {
+      return ctx.reply('Bạn chưa thuộc team nào. Dùng /createteam hoặc /jointeam.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const team = user.teamId;
+
+    const members = await User.find({ teamId: team._id }).sort({ totalXP: -1 }).limit(10);
+
+    let text = `👥 Team: ${team.name}\n`;
+    text += `Thành viên: ${members.length}\n\n`;
+
+    members.forEach((m, i) => {
+      const lv = calcLevel(m.totalXP || 0);
+      const name = m.username ? '@' + m.username : 'ID ' + m.telegramId;
+      text += `${i + 1}. ${name} – Level ${lv} (${m.totalXP} XP)\n`;
+    });
+
+    await ctx.reply(text, { reply_to_message_id: ctx.message?.message_id });
+  });
+
+  bot.command('teamtop', async (ctx) => {
+    const teams = await Team.find();
+    if (!teams.length) {
+      return ctx.reply('Chưa có team nào.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const aggregates = [];
+    for (const t of teams) {
+      const members = await User.find({ teamId: t._id });
+      const totalXP = members.reduce((sum, u) => sum + (u.totalXP || 0), 0);
+      aggregates.push({ team: t, totalXP });
+    }
+
+    aggregates.sort((a, b) => b.totalXP - a.totalXP);
+
+    let text = '🏆 TOP TEAM\n\n';
+    aggregates.slice(0, 10).forEach((item, i) => {
+      text += `${i + 1}. ${item.team.name} – ${item.totalXP} XP\n`;
+    });
+
+    await ctx.reply(text, { reply_to_message_id: ctx.message?.message_id });
+  });
+
+  // ========== PROFILE ==========
+  bot.command('profile', async (ctx) => {
+    const from = ctx.from;
+    if (!from) return;
+
+    const user = await User.findOne({ telegramId: from.id }).populate('teamId');
+    if (!user) {
+      return ctx.reply('Bạn chưa có dữ liệu, hãy chat trong group trước.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const level = calcLevel(user.totalXP || 0);
+    const nextLevel = level + 1;
+    const xpNextLevel = 5 * nextLevel * nextLevel;
+    const need = Math.max(0, xpNextLevel - (user.totalXP || 0));
+    const titles = getTitles(user, level);
+
+    let text = [
+      '🧾 HỒ SƠ CỦA BẠN',
+      '',
+      `• Tên: ${user.username || ('ID ' + user.telegramId)}`,
+      `• Level: ${level} (${user.totalXP} XP)`,
+      `• Còn thiếu: ${need} XP để lên Level ${nextLevel}`,
+      `• Danh hiệu: ${titles.join(', ')}`,
+      `• Coin: ${user.topCoin || 0}`,
+      `• Tin nhắn đã gửi: ${user.messageCount || 0}`,
+      `• XP tuần: ${user.weekXP || 0} • XP tháng: ${user.monthXP || 0}`,
+      `• Chuỗi daily: ${user.dailyStreak || 0} ngày`,
+      `• Team: ${user.teamId ? user.teamId.name : 'Chưa có'}`
+    ].join('\n');
+
+    await ctx.reply(text, { reply_to_message_id: ctx.message?.message_id });
+  });
+
 };

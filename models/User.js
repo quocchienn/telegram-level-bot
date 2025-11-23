@@ -4,6 +4,9 @@ const userSchema = new mongoose.Schema({
   telegramId: { type: Number, index: true },
   username: String,
 
+  // Team/Clan
+  teamId: { type: mongoose.Schema.Types.ObjectId, ref: 'Team', default: null },
+
   // XP & level
   totalXP: { type: Number, default: 0 },
 
