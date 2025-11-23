@@ -1160,72 +1160,214 @@ export default (bot) => {
   bot.command('shield', async (ctx) => handleDuelChoice(ctx, 'shield'));
   bot.command('dodge', async (ctx) => handleDuelChoice(ctx, 'dodge'));
 
-  // Quiz đơn giản
-  const quizSessions = new Map();
+   // ========== QUIZ NÂNG CAO (CỘNG / TRỪ / NHÂN / CHIA, NHIỀU BƯỚC, GIỚI HẠN 200 XP/NGÀY) ==========
+  const quizzes = new Map(); // key: telegramId -> { answer, expr }
+
+  const QUIZ_DAILY_XP_LIMIT = 200; // tối đa XP nhận từ quiz mỗi ngày
+  const QUIZ_GAIN_XP = 10;         // XP cho 1 câu đúng
+
+  function generateQuizByLevel(level) {
+    // level thấp: phép đơn giản
+    if (level < 10) {
+      const a = Math.floor(Math.random() * 20) + 1;
+      const b = Math.floor(Math.random() * 20) + 1;
+      const ops = ['+', '-'];
+      const op = ops[Math.floor(Math.random() * ops.length)];
+      let expr, answer;
+
+      if (op === '+') {
+        expr = `${a} + ${b}`;
+        answer = a + b;
+      } else {
+        const x = Math.max(a, b);
+        const y = Math.min(a, b);
+        expr = `${x} - ${y}`;
+        answer = x - y;
+      }
+
+      return { expr, answer };
+    }
+
+    // level trung bình: 2–3 bước, có nhân/chia nhẹ
+    if (level < 30) {
+      const pattern = Math.floor(Math.random() * 3); // 0,1,2
+      let a, b, c, expr, answer;
+
+      switch (pattern) {
+        case 0: // a * b + c
+          a = Math.floor(Math.random() * 10) + 2;
+          b = Math.floor(Math.random() * 10) + 2;
+          c = Math.floor(Math.random() * 20) + 1;
+          expr = `${a} × ${b} + ${c}`;
+          answer = a * b + c;
+          break;
+        case 1: // a + b * c
+          a = Math.floor(Math.random() * 20) + 1;
+          b = Math.floor(Math.random() * 10) + 2;
+          c = Math.floor(Math.random() * 5) + 2;
+          expr = `${a} + ${b} × ${c}`;
+          answer = a + b * c;
+          break;
+        default: // (a + b) - c
+          a = Math.floor(Math.random() * 30) + 5;
+          b = Math.floor(Math.random() * 20) + 1;
+          c = Math.floor(Math.random() * 15) + 1;
+          const sum = a + b;
+          if (c > sum) c = Math.floor(sum / 2);
+          expr = `(${a} + ${b}) - ${c}`;
+          answer = a + b - c;
+          break;
+      }
+
+      return { expr, answer };
+    }
+
+    // level cao: biểu thức nhiều bước, có ngoặc, nhân/chia nặng hơn
+    const pattern = Math.floor(Math.random() * 4); // 0..3
+    let a, b, c, d, expr, answer;
+
+    switch (pattern) {
+      case 0: // (a * b) + (c * d)
+        a = Math.floor(Math.random() * 10) + 2;
+        b = Math.floor(Math.random() * 10) + 2;
+        c = Math.floor(Math.random() * 10) + 2;
+        d = Math.floor(Math.random() * 10) + 2;
+        expr = `(${a} × ${b}) + (${c} × ${d})`;
+        answer = a * b + c * d;
+        break;
+
+      case 1: // (a + b) * c
+        a = Math.floor(Math.random() * 20) + 1;
+        b = Math.floor(Math.random() * 20) + 1;
+        c = Math.floor(Math.random() * 10) + 2;
+        expr = `(${a} + ${b}) × ${c}`;
+        answer = (a + b) * c;
+        break;
+
+      case 2: // (a * b) - (c + d)
+        a = Math.floor(Math.random() * 10) + 3;
+        b = Math.floor(Math.random() * 10) + 3;
+        c = Math.floor(Math.random() * 10) + 1;
+        d = Math.floor(Math.random() * 10) + 1;
+        const prod = a * b;
+        const sumCD = c + d;
+        if (sumCD > prod - 1) {
+          // đảm bảo kết quả dương
+          c = 1;
+          d = Math.min(5, prod - 2);
+        }
+        expr = `(${a} × ${b}) - (${c} + ${d})`;
+        answer = a * b - (c + d);
+        break;
+
+      default: // (a * b) ÷ c  + d  (chia ra số nguyên)
+        c = Math.floor(Math.random() * 9) + 2; // 2..10
+        const tmp = Math.floor(Math.random() * 10) + 2; // 2..11
+        a = Math.floor(Math.random() * 10) + 2;
+        b = c * tmp; // để (b ÷ c) = tmp
+        d = Math.floor(Math.random() * 20) + 1;
+        expr = `(${b} ÷ ${c}) + ${d}`;
+        answer = tmp + d;
+        break;
+    }
+
+    return { expr, answer };
+  }
 
   bot.command('quiz', async (ctx) => {
     const from = ctx.from;
     if (!from) return;
 
-    const a = Math.floor(Math.random() * 10) + 1;
-    const b = Math.floor(Math.random() * 10) + 1;
-    const correct = a + b;
-
-    const options = [correct];
-    while (options.length < 3) {
-      const v = correct + (Math.floor(Math.random() * 7) - 3);
-      if (!options.includes(v) && v > 0) options.push(v);
+    const user = await User.findOne({ telegramId: from.id });
+    if (!user) {
+      return ctx.reply('Bạn chưa có dữ liệu trong hệ thống.');
     }
-    options.sort(() => Math.random() - 0.5);
 
-    quizSessions.set(from.id, { answer: correct });
+    const today = new Date().toISOString().slice(0, 10);
 
-    const text = `🧠 Quiz nhanh:\n${a} + ${b} = ?`;
+    // log XP từ quiz
+    if (!user.quizXp) {
+      user.quizXp = { date: today, xp: 0 };
+    }
+    if (user.quizXp.date !== today) {
+      user.quizXp = { date: today, xp: 0 };
+    }
 
-    await ctx.reply(
-      text + '\n(Hãy trả lời bằng tin nhắn số đúng)',
-      { reply_to_message_id: ctx.message?.message_id }
+    if (user.quizXp.xp >= QUIZ_DAILY_XP_LIMIT) {
+      return ctx.reply(`🚫 Bạn đã đạt giới hạn ${QUIZ_DAILY_XP_LIMIT} XP từ /quiz trong hôm nay.`);
+    }
+
+    const level = calcLevel(user.totalXP || 0);
+    const { expr, answer } = generateQuizByLevel(level);
+
+    quizzes.set(from.id, { answer });
+
+    return ctx.reply(
+      [
+        `🧠 Câu hỏi cho bạn (Level ${level}):`,
+        '',
+        `${expr} = ?`,
+        '',
+        'Trả lời bằng cách gửi *mỗi số thôi* (không kèm chữ).'
+      ].join('\\n'),
+      { parse_mode: 'Markdown' }
     );
   });
 
-  // bắt mọi tin nhắn để check quiz answer
+  // Bắt mọi text để check câu trả lời quiz
   bot.on('text', async (ctx, next) => {
     const from = ctx.from;
     if (!from) return next();
 
-    const session = quizSessions.get(from.id);
-    if (!session) return next();
+    const quiz = quizzes.get(from.id);
+    if (!quiz) return next(); // không có quiz đang chờ -> cho handler khác xử lý
 
-    const val = Number((ctx.message.text || '').trim());
+    const raw = (ctx.message.text || '').trim();
+    const val = Number(raw);
     if (isNaN(val)) return next();
 
-    quizSessions.delete(from.id);
+    quizzes.delete(from.id); // mỗi quiz chỉ trả lời 1 lần
 
     const user = await User.findOne({ telegramId: from.id });
     if (!user) return next();
 
-    if (val === session.answer) {
-      const gainXP = 10;
-      const gainCoin = 5;
-      user.totalXP = (user.totalXP || 0) + gainXP;
-      user.dayXP = (user.dayXP || 0) + gainXP;
-      user.weekXP = (user.weekXP || 0) + gainXP;
-      user.monthXP = (user.monthXP || 0) + gainXP;
-      user.topCoin = (user.topCoin || 0) + gainCoin;
-      await user.save();
+    const today = new Date().toISOString().slice(0, 10);
 
-      await ctx.reply(
-        `✅ Chính xác! +${gainXP} XP, +${gainCoin} coin`,
-        { reply_to_message_id: ctx.message?.message_id }
-      );
-    } else {
-      await ctx.reply(
-        `❌ Sai rồi. Đáp án đúng là ${session.answer}.`,
-        { reply_to_message_id: ctx.message?.message_id }
-      );
+    if (!user.quizXp) {
+      user.quizXp = { date: today, xp: 0 };
+    }
+    if (user.quizXp.date !== today) {
+      user.quizXp = { date: today, xp: 0 };
     }
 
-    return next();
+    if (user.quizXp.xp >= QUIZ_DAILY_XP_LIMIT) {
+      return ctx.reply(`🚫 Bạn đã đạt giới hạn ${QUIZ_DAILY_XP_LIMIT} XP từ /quiz trong hôm nay.`);
+    }
+
+    if (val === quiz.answer) {
+      const xpCanGain = Math.min(
+        QUIZ_GAIN_XP,
+        QUIZ_DAILY_XP_LIMIT - user.quizXp.xp
+      );
+
+      user.quizXp.xp += xpCanGain;
+
+      user.totalXP = (user.totalXP || 0) + xpCanGain;
+      user.dayXP = (user.dayXP || 0) + xpCanGain;
+      user.weekXP = (user.weekXP || 0) + xpCanGain;
+      user.monthXP = (user.monthXP || 0) + xpCanGain;
+
+      await user.save();
+
+      return ctx.reply(
+        [
+          `🎉 Chính xác! +${xpCanGain} XP`,
+          `📌 XP quiz hôm nay: ${user.quizXp.xp}/${QUIZ_DAILY_XP_LIMIT}`
+        ].join('\\n')
+      );
+    } else {
+      return ctx.reply(`❌ Sai rồi.\nĐáp án đúng là: ${quiz.answer}`);
+    }
   });
 
   // ========== GỬI COIN ==========
