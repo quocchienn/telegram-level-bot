@@ -960,7 +960,7 @@ export default (bot) => {
   });
 
   // ========== MINI GAME ==========
-  // /roll – user vs bot
+  // ========== /ROLL: THẮNG +20, THUA -20 ==========
   bot.command('roll', async (ctx) => {
     const from = ctx.from;
     if (!from) return;
@@ -973,19 +973,29 @@ export default (bot) => {
     const userRoll = Math.floor(Math.random() * 100) + 1;
     const botRoll = Math.floor(Math.random() * 100) + 1;
 
+    const amount = 20; // số coin thắng/thua
+
     let result = '';
     if (userRoll > botRoll) {
-      const gain = 20;
-      user.topCoin = (user.topCoin || 0) + gain;
+      user.topCoin = (user.topCoin || 0) + amount;
       await user.save();
-      result = `🎲 Bạn: ${userRoll} • Bot: ${botRoll}\n✅ Bạn thắng! +${gain} coin`;
+      result =
+        `🎲 Bạn: ${userRoll} • Bot: ${botRoll}\n` +
+        `✅ Bạn thắng! +${amount} coin\n` +
+        `💰 Coin hiện tại: ${user.topCoin}`;
     } else if (userRoll < botRoll) {
-      const loss = 5;
-      user.topCoin = Math.max(0, (user.topCoin || 0) - loss);
+      const before = user.topCoin || 0;
+      const loss = Math.min(amount, before); // không cho âm
+      user.topCoin = before - loss;
       await user.save();
-      result = `🎲 Bạn: ${userRoll} • Bot: ${botRoll}\n❌ Bạn thua! -${loss} coin`;
+      result =
+        `🎲 Bạn: ${userRoll} • Bot: ${botRoll}\n` +
+        `❌ Bạn thua! -${loss} coin\n` +
+        `💰 Coin hiện tại: ${user.topCoin}`;
     } else {
-      result = `🎲 Bạn: ${userRoll} • Bot: ${botRoll}\n⚖️ Hòa, không mất gì.`;
+      result =
+        `🎲 Bạn: ${userRoll} • Bot: ${botRoll}\n` +
+        '⚖️ Hòa, không được gì cũng không mất gì.';
     }
 
     await ctx.reply(result, { reply_to_message_id: ctx.message?.message_id });
@@ -1029,8 +1039,8 @@ export default (bot) => {
 
     let text =
       '⚔️ KẾT QUẢ TRẬN ĐẤU\\n' +
-      `${challenger.username || challenger.telegramId}: ${challengerChoice.toUpperCase()}\\n` +
-      `${target.username || target.telegramId}: ${targetChoice.toUpperCase()}\\n\\n`;
+      `${challenger.username || challenger.telegramId}: ${challengerChoice.toUpperCase()}\n` +
+      `${target.username || target.telegramId}: ${targetChoice.toUpperCase()}\n\n`;
 
     if (result === 'draw') {
       text += '⚖️ Hòa, không ai mất coin.';
@@ -1108,7 +1118,7 @@ export default (bot) => {
         '/attack – Đấm (thắng /dodge)',
         '/shield – Chắn (thắng /attack)',
         '/dodge – Né (thắng /shield)'
-      ].join('\\n'),
+      ].join('\n'),
       { reply_to_message_id: ctx.message?.message_id }
     );
   });
@@ -1160,11 +1170,14 @@ export default (bot) => {
   bot.command('shield', async (ctx) => handleDuelChoice(ctx, 'shield'));
   bot.command('dodge', async (ctx) => handleDuelChoice(ctx, 'dodge'));
 
-   // ========== QUIZ NÂNG CAO (CỘNG / TRỪ / NHÂN / CHIA, NHIỀU BƯỚC, GIỚI HẠN 200 XP/NGÀY) ==========
-  const quizzes = new Map(); // key: telegramId -> { answer, expr }
+  // ========== QUIZ NÂNG CAO (NHIỀU BƯỚC, CÓ THỜI GIAN, CÓ TRỪ ĐIỂM) ==========
+  const quizzes = new Map(); // key: telegramId -> { answer, expr, expiresAt, chatId }
 
-  const QUIZ_DAILY_XP_LIMIT = 200; // tối đa XP nhận từ quiz mỗi ngày
-  const QUIZ_GAIN_XP = 10;         // XP cho 1 câu đúng
+  const QUIZ_DAILY_XP_LIMIT = 200; // tối đa XP cộng từ quiz mỗi ngày
+  const QUIZ_GAIN_XP = 10;         // XP thưởng mỗi câu đúng
+  const QUIZ_PENALTY_XP = 5;       // XP phạt khi sai/hết giờ
+  const QUIZ_PENALTY_COINS = 5;    // coin phạt khi sai/hết giờ
+  const QUIZ_TIMEOUT_MS = 30000;   // 30 giây
 
   function generateQuizByLevel(level) {
     // level thấp: phép đơn giản
@@ -1188,7 +1201,7 @@ export default (bot) => {
       return { expr, answer };
     }
 
-    // level trung bình: 2–3 bước, có nhân/chia nhẹ
+    // level trung bình: 2–3 bước, có nhân/trừ
     if (level < 30) {
       const pattern = Math.floor(Math.random() * 3); // 0,1,2
       let a, b, c, expr, answer;
@@ -1252,7 +1265,6 @@ export default (bot) => {
         const prod = a * b;
         const sumCD = c + d;
         if (sumCD > prod - 1) {
-          // đảm bảo kết quả dương
           c = 1;
           d = Math.min(5, prod - 2);
         }
@@ -1272,6 +1284,31 @@ export default (bot) => {
     }
 
     return { expr, answer };
+  }
+
+  async function applyQuizPenalty(bot, user, chatId, reasonText) {
+    // trừ XP (không âm)
+    const beforeXP = user.totalXP || 0;
+    const xpLoss = Math.min(QUIZ_PENALTY_XP, beforeXP);
+
+    user.totalXP = beforeXP - xpLoss;
+    user.dayXP   = Math.max(0, (user.dayXP   || 0) - xpLoss);
+    user.weekXP  = Math.max(0, (user.weekXP  || 0) - xpLoss);
+    user.monthXP = Math.max(0, (user.monthXP || 0) - xpLoss);
+
+    // trừ coin (không âm)
+    const beforeCoin = user.topCoin || 0;
+    const coinLoss = Math.min(QUIZ_PENALTY_COINS, beforeCoin);
+    user.topCoin = beforeCoin - coinLoss;
+
+    await user.save();
+
+    const text =
+      `${reasonText}\n` +
+      `🔻 Phạt: -${xpLoss} XP, -${coinLoss} coin\n` +
+      `📊 XP hiện tại: ${user.totalXP} • Coin: ${user.topCoin}`;
+
+    await bot.telegram.sendMessage(chatId, text);
   }
 
   bot.command('quiz', async (ctx) => {
@@ -1300,7 +1337,30 @@ export default (bot) => {
     const level = calcLevel(user.totalXP || 0);
     const { expr, answer } = generateQuizByLevel(level);
 
-    quizzes.set(from.id, { answer });
+    const expiresAt = Date.now() + QUIZ_TIMEOUT_MS;
+
+    quizzes.set(from.id, {
+      answer,
+      expr,
+      expiresAt,
+      chatId: ctx.chat.id
+    });
+
+    // hẹn giờ xử lý hết thời gian
+    setTimeout(async () => {
+      const current = quizzes.get(from.id);
+      if (!current) return; // đã trả lời rồi
+
+      // đã hết hạn?
+      if (current.expiresAt <= Date.now()) {
+        quizzes.delete(from.id);
+
+        const u = await User.findOne({ telegramId: from.id });
+        if (!u) return;
+
+        await applyQuizPenalty(ctx.bot, u, current.chatId, '⏱ Hết thời gian trả lời /quiz.');
+      }
+    }, QUIZ_TIMEOUT_MS + 500);
 
     return ctx.reply(
       [
@@ -1308,6 +1368,7 @@ export default (bot) => {
         '',
         `${expr} = ?`,
         '',
+        `⏱ Bạn có ${QUIZ_TIMEOUT_MS / 1000} giây để trả lời.`,
         'Trả lời bằng cách gửi *mỗi số thôi* (không kèm chữ).'
       ].join('\n'),
       { parse_mode: 'Markdown' }
@@ -1340,11 +1401,18 @@ export default (bot) => {
       user.quizXp = { date: today, xp: 0 };
     }
 
-    if (user.quizXp.xp >= QUIZ_DAILY_XP_LIMIT) {
-      return ctx.reply(`🚫 Bạn đã đạt giới hạn ${QUIZ_DAILY_XP_LIMIT} XP từ /quiz trong hôm nay.`);
+    // hết thời gian nhưng vẫn trả lời -> tính là timeout + phạt
+    if (Date.now() > quiz.expiresAt) {
+      await applyQuizPenalty(ctx.bot, user, ctx.chat.id, '⏱ Bạn trả lời quá trễ.');
+      return;
     }
 
+    // nếu đã chạm limit XP cộng thì không thưởng nữa nhưng vẫn không phạt thêm
     if (val === quiz.answer) {
+      if (user.quizXp.xp >= QUIZ_DAILY_XP_LIMIT) {
+        return ctx.reply(`🚫 Bạn đã đạt giới hạn ${QUIZ_DAILY_XP_LIMIT} XP từ /quiz trong hôm nay.`);
+      }
+
       const xpCanGain = Math.min(
         QUIZ_GAIN_XP,
         QUIZ_DAILY_XP_LIMIT - user.quizXp.xp
@@ -1353,8 +1421,8 @@ export default (bot) => {
       user.quizXp.xp += xpCanGain;
 
       user.totalXP = (user.totalXP || 0) + xpCanGain;
-      user.dayXP = (user.dayXP || 0) + xpCanGain;
-      user.weekXP = (user.weekXP || 0) + xpCanGain;
+      user.dayXP   = (user.dayXP   || 0) + xpCanGain;
+      user.weekXP  = (user.weekXP  || 0) + xpCanGain;
       user.monthXP = (user.monthXP || 0) + xpCanGain;
 
       await user.save();
@@ -1366,7 +1434,8 @@ export default (bot) => {
         ].join('\n')
       );
     } else {
-      return ctx.reply(`❌ Sai rồi.\nĐáp án đúng là: ${quiz.answer}`);
+      await applyQuizPenalty(ctx.bot, user, ctx.chat.id, '❌ Bạn trả lời sai /quiz.');
+      return;
     }
   });
 
