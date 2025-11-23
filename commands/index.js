@@ -1177,7 +1177,7 @@ export default (bot) => {
   const QUIZ_GAIN_XP = 10;         // XP thưởng mỗi câu đúng
   const QUIZ_PENALTY_XP = 5;       // XP phạt khi sai/hết giờ
   const QUIZ_PENALTY_COINS = 5;    // coin phạt khi sai/hết giờ
-  const QUIZ_TIMEOUT_MS = 30000;   // 30 giây
+  const QUIZ_TIMEOUT_MS = 20000;   // 30 giây
 
   function generateQuizByLevel(level) {
     // level thấp: phép đơn giản
