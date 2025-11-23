@@ -1438,7 +1438,222 @@ export default (bot) => {
       return;
     }
   });
+  // ========== EXTRA MINI GAMES: /race – /hunt – /steal ==========
 
+  // /RACE – ĐUA XE NGẪU NHIÊN
+  bot.command('race', async (ctx) => {
+    const from = ctx.from;
+    if (!from) return;
+
+    const user = await User.findOne({ telegramId: from.id });
+    if (!user) {
+      return ctx.reply('Bạn chưa có dữ liệu, hãy chat trong group trước.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const vehicles = ['🚗 Xe đỏ', '🏎️ Siêu xe', '🚓 Cảnh sát', '🛵 Xe máy', '🐌 Ốc sên'];
+    const myVehicle = vehicles[Math.floor(Math.random() * vehicles.length)];
+
+    // 0–1 random, <0.5 thua, >=0.5 thắng
+    const win = Math.random() >= 0.5;
+
+    const reward = 30;
+    const penalty = 15;
+
+    let text =
+      '🏁 ĐUA XE BẮT ĐẦU\n' +
+      `Bạn lái: ${myVehicle}\n\n`;
+
+    if (win) {
+      user.topCoin = (user.topCoin || 0) + reward;
+      await user.save();
+      text +=
+        '🔥 Bạn tăng ga vượt mọi đối thủ!\n' +
+        `🏆 Kết quả: THẮNG! +${reward} coin\n` +
+        `💰 Coin hiện tại: ${user.topCoin}`;
+    } else {
+      const before = user.topCoin || 0;
+      const loss = Math.min(penalty, before);
+      user.topCoin = before - loss;
+      await user.save();
+      text +=
+        '💥 Xe bạn bị đối thủ vượt mặt...\n' +
+        `😵 Kết quả: THUA! -${loss} coin\n` +
+        `💰 Coin hiện tại: ${user.topCoin}`;
+    }
+
+    await ctx.reply(text, { reply_to_message_id: ctx.message?.message_id });
+  });
+
+  // /HUNT – SĂN QUÁI, CÓ CỘNG/TRỪ XP
+  bot.command('hunt', async (ctx) => {
+    const from = ctx.from;
+    if (!from) return;
+
+    const user = await User.findOne({ telegramId: from.id });
+    if (!user) {
+      return ctx.reply('Bạn chưa có dữ liệu, hãy chat trong group trước.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const monsters = [
+      '🐺 Sói hoang',
+      '🐉 Rồng mini',
+      '🧟‍♂️ Thây ma lang thang',
+      '🦇 Dơi đêm',
+      '👹 Quỷ lùn'
+    ];
+
+    const monster = monsters[Math.floor(Math.random() * monsters.length)];
+
+    const winChance = 0.6; // 60% thắng
+    const isWin = Math.random() < winChance;
+
+    const gainXP = 20;
+    const lostXP = 10;
+
+    let text = `🎯 Bạn bắt gặp: ${monster}\n`;
+
+    if (isWin) {
+      user.totalXP = (user.totalXP || 0) + gainXP;
+      user.dayXP   = (user.dayXP   || 0) + gainXP;
+      user.weekXP  = (user.weekXP  || 0) + gainXP;
+      user.monthXP = (user.monthXP || 0) + gainXP;
+
+      await user.save();
+
+      const level = calcLevel(user.totalXP || 0);
+
+      text +=
+        '⚔️ Bạn xông vào tấn công và hạ gục nó!\n' +
+        `✅ Phần thưởng: +${gainXP} XP\n` +
+        `📊 XP hiện tại: ${user.totalXP} (Level ${level})`;
+    } else {
+      const before = user.totalXP || 0;
+      const loss = Math.min(lostXP, before);
+
+      user.totalXP = before - loss;
+      user.dayXP   = Math.max(0, (user.dayXP   || 0) - loss);
+      user.weekXP  = Math.max(0, (user.weekXP  || 0) - loss);
+      user.monthXP = Math.max(0, (user.monthXP || 0) - loss);
+
+      await user.save();
+
+      const level = calcLevel(user.totalXP || 0);
+
+      text +=
+        '💀 Quái phản đòn, bạn bị thương và phải rút lui.\n' +
+        `🔻 Bị phạt: -${loss} XP\n` +
+        `📊 XP hiện tại: ${user.totalXP} (Level ${level})`;
+    }
+
+    await ctx.reply(text, { reply_to_message_id: ctx.message?.message_id });
+  });
+
+  // /STEAL – TRỘM COIN (50% THÀNH CÔNG, CÓ COOLDOWN)
+  const stealCooldown = new Map(); // key: telegramId -> timestamp ms
+  const STEAL_COOLDOWN_MS = 60 * 60 * 1000; // 1 giờ
+
+  bot.command('steal', async (ctx) => {
+    const from = ctx.from;
+    if (!from) return;
+
+    const parts = ctx.message.text.split(' ').filter(Boolean);
+    const userArg = parts[1];
+    const amountStr = parts[2];
+
+    if (!userArg || !amountStr) {
+      return ctx.reply('Dùng: /steal <@username|telegramId> <số_coin>', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const amount = Number(amountStr);
+    if (isNaN(amount) || amount <= 0) {
+      return ctx.reply('Số coin không hợp lệ.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    // cooldown
+    const now = Date.now();
+    const last = stealCooldown.get(from.id) || 0;
+    if (now - last < STEAL_COOLDOWN_MS) {
+      const remain = STEAL_COOLDOWN_MS - (now - last);
+      const minutes = Math.ceil(remain / 60000);
+      return ctx.reply(`⏳ Bạn phải đợi khoảng ${minutes} phút nữa mới được /steal tiếp.`, { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const thief = await User.findOne({ telegramId: from.id });
+    if (!thief) {
+      return ctx.reply('Bạn chưa có dữ liệu trong hệ thống.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    // tìm nạn nhân
+    let target;
+    if (userArg.startsWith('@')) {
+      const uname = userArg.slice(1);
+      target = await User.findOne({ username: uname });
+    } else {
+      const idNum = Number(userArg);
+      if (!isNaN(idNum)) {
+        target = await User.findOne({ telegramId: idNum });
+      }
+    }
+
+    if (!target) {
+      return ctx.reply('Không tìm thấy người để trộm (theo username/ID).', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    if (target.telegramId === thief.telegramId) {
+      return ctx.reply('Bạn không thể tự trộm coin của chính mình 🤨', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    const thiefCoin = thief.topCoin || 0;
+    const targetCoin = target.topCoin || 0;
+
+    if (thiefCoin <= 0) {
+      return ctx.reply('Bạn không có coin, trộm thất bại là bạn đi bụi luôn đó 😅', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    if (targetCoin <= 0) {
+      return ctx.reply('Người này không có coin để trộm.', { reply_to_message_id: ctx.message?.message_id });
+    }
+
+    // set cooldown
+    stealCooldown.set(from.id, now);
+
+    // 50% tỉ lệ thành công
+    const success = Math.random() < 0.5;
+
+    if (success) {
+      const stealAmount = Math.min(amount, targetCoin);
+
+      target.topCoin = targetCoin - stealAmount;
+      thief.topCoin = thiefCoin + stealAmount;
+
+      await target.save();
+      await thief.save();
+
+      const text =
+        '🕵️ Phi vụ trộm coin\n' +
+        `🎯 Mục tiêu: ${target.username || target.telegramId}\n` +
+        `✅ Thành công! Bạn trộm được ${stealAmount} coin\n\n` +
+        `💰 Coin của bạn: ${thief.topCoin}\n` +
+        `💸 Coin của mục tiêu: ${target.topCoin}`;
+
+      return ctx.reply(text, { reply_to_message_id: ctx.message?.message_id });
+    } else {
+      // thất bại: mất amount/2
+      const penalty = Math.min(Math.floor(amount / 2), thiefCoin);
+
+      thief.topCoin = thiefCoin - penalty;
+      await thief.save();
+
+      const text =
+        '🕵️ Phi vụ trộm coin\n' +
+        `🎯 Mục tiêu: ${target.username || target.telegramId}\n` +
+        '💀 Bạn bị bắt quả tang khi đang trộm!\n' +
+        `🔻 Bị phạt: -${penalty} coin\n` +
+        `💰 Coin hiện tại của bạn: ${thief.topCoin}`;
+
+      return ctx.reply(text, { reply_to_message_id: ctx.message?.message_id });
+    }
+  });
   // ========== GỬI COIN ==========
   bot.command('send', async (ctx) => {
     const from = ctx.from;
