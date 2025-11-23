@@ -1451,7 +1451,7 @@ export default (bot) => {
       return;
     }
   });
-  /  // ================== MINI GAME: /race /hunt /steal ==================
+  // ================== MINI GAME: /race /hunt /steal ==================
 
   // /RACE – ĐUA XE CÓ CƯỢC
   bot.command('race', async (ctx) => {
