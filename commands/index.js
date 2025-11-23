@@ -991,8 +991,68 @@ export default (bot) => {
     await ctx.reply(result, { reply_to_message_id: ctx.message?.message_id });
   });
 
-  // Duel đơn giản – lưu trạng thái trong RAM (restart bot sẽ mất)
-  const duelRequests = new Map();
+    // ========== DUEL: ĐẤM / CHẮN / NÉ ==========
+  // Lưu trạng thái trong RAM (restart bot sẽ mất)
+  const duels = new Map(); // key: "minId:maxId" -> { challengerId, targetId, amount, challengerChoice, targetChoice }
+
+  function getDuelKey(a, b) {
+    return [a, b].sort().join(':');
+  }
+
+  function getOutcome(a, b) {
+    if (a === b) return 'draw';
+
+    // Attack thắng Dodge, Dodge thắng Shield, Shield thắng Attack
+    if (a === 'attack' && b === 'dodge') return 'a';
+    if (a === 'dodge' && b === 'shield') return 'a';
+    if (a === 'shield' && b === 'attack') return 'a';
+
+    return 'b';
+  }
+
+  async function resolveDuel(ctx, duel) {
+    const { challengerId, targetId, amount, challengerChoice, targetChoice } = duel;
+
+    const challenger = await User.findOne({ telegramId: challengerId });
+    const target = await User.findOne({ telegramId: targetId });
+
+    if (!challenger || !target) {
+      return ctx.reply('Một trong hai người chơi không còn trong hệ thống.');
+    }
+
+    // kiểm tra lại coin lần nữa
+    if ((challenger.topCoin || 0) < amount || (target.topCoin || 0) < amount) {
+      return ctx.reply('Một trong hai người không đủ coin để tiếp tục.');
+    }
+
+    const result = getOutcome(challengerChoice, targetChoice);
+
+    let text =
+      '⚔️ KẾT QUẢ TRẬN ĐẤU\\n' +
+      `${challenger.username || challenger.telegramId}: ${challengerChoice.toUpperCase()}\\n` +
+      `${target.username || target.telegramId}: ${targetChoice.toUpperCase()}\\n\\n`;
+
+    if (result === 'draw') {
+      text += '⚖️ Hòa, không ai mất coin.';
+    } else {
+      const winner = result === 'a' ? challenger : target;
+      const loser = result === 'a' ? target : challenger;
+
+      loser.topCoin -= amount;
+      winner.topCoin = (winner.topCoin || 0) + amount;
+
+      await loser.save();
+      await winner.save();
+
+      text += `🏆 Người thắng: ${winner.username || winner.telegramId} (+${amount} coin)`;
+    }
+
+    await ctx.reply(text);
+
+    // xoá session
+    const key = getDuelKey(challengerId, targetId);
+    duels.delete(key);
+  }
 
   bot.command('duel', async (ctx) => {
     const from = ctx.from;
@@ -1020,86 +1080,85 @@ export default (bot) => {
       return ctx.reply('Bạn không đủ coin để đặt cược.', { reply_to_message_id: ctx.message?.message_id });
     }
 
-    const targetMention = userArg.startsWith('@') ? userArg.slice(1) : userArg.replace('@','');
-    const targetUser = await User.findOne({ username: targetMention });
-    if (!targetUser) {
+    const targetMention = userArg.startsWith('@') ? userArg.slice(1) : userArg.replace('@', '');
+    const target = await User.findOne({ username: targetMention });
+    if (!target) {
       return ctx.reply('Không tìm thấy đối thủ (theo username).', { reply_to_message_id: ctx.message?.message_id });
     }
 
-    if ((targetUser.topCoin || 0) < amount) {
+    if ((target.topCoin || 0) < amount) {
       return ctx.reply('Đối thủ không đủ coin để tham gia.', { reply_to_message_id: ctx.message?.message_id });
     }
 
-    duelRequests.set(targetUser.telegramId, {
-      fromId: challenger.telegramId,
-      amount
+    const key = getDuelKey(challenger.telegramId, target.telegramId);
+
+    duels.set(key, {
+      challengerId: challenger.telegramId,
+      targetId: target.telegramId,
+      amount,
+      challengerChoice: null,
+      targetChoice: null
     });
 
     await ctx.reply(
-      `⚔️ ${challenger.username || challenger.telegramId} thách đấu ${userArg} với cược ${amount} coin.\n` +
-      `${userArg} gõ /accept để chấp nhận.`,
+      [
+        `⚔️ ${challenger.username || challenger.telegramId} thách đấu @${target.username} với ${amount} coin!`,
+        '',
+        'Mỗi bên hãy chọn một trong 3 lệnh dưới đây:',
+        '/attack – Đấm (thắng /dodge)',
+        '/shield – Chắn (thắng /attack)',
+        '/dodge – Né (thắng /shield)'
+      ].join('\\n'),
       { reply_to_message_id: ctx.message?.message_id }
     );
   });
 
-  bot.command('accept', async (ctx) => {
+  async function handleDuelChoice(ctx, move) {
     const from = ctx.from;
     if (!from) return;
 
-    const req = duelRequests.get(from.id);
-    if (!req) {
-      return ctx.reply('Bạn không có lời thách đấu nào đang chờ.', { reply_to_message_id: ctx.message?.message_id });
+    // tìm duel có bạn tham gia
+    let duel = null;
+    let keyFound = null;
+    for (const [key, d] of duels.entries()) {
+      if (d.challengerId === from.id || d.targetId === from.id) {
+        duel = d;
+        keyFound = key;
+        break;
+      }
     }
 
-    const challenger = await User.findOne({ telegramId: req.fromId });
-    const target = await User.findOne({ telegramId: from.id });
-
-    if (!challenger || !target) {
-      duelRequests.delete(from.id);
-      return ctx.reply('Không tìm thấy người chơi.', { reply_to_message_id: ctx.message?.message_id });
+    if (!duel) {
+      return ctx.reply('Bạn không có trận duel nào đang diễn ra.', { reply_to_message_id: ctx.message?.message_id });
     }
 
-    const amount = req.amount;
-
-    if ((challenger.topCoin || 0) < amount || (target.topCoin || 0) < amount) {
-      duelRequests.delete(from.id);
-      return ctx.reply('Một trong hai người không đủ coin để tiếp tục.', { reply_to_message_id: ctx.message?.message_id });
+    if (duel.challengerId === from.id && duel.challengerChoice) {
+      return ctx.reply('Bạn đã chọn rồi, chờ đối thủ.', { reply_to_message_id: ctx.message?.message_id });
     }
 
-    const roll1 = Math.floor(Math.random() * 100) + 1;
-    const roll2 = Math.floor(Math.random() * 100) + 1;
+    if (duel.targetId === from.id && duel.targetChoice) {
+      return ctx.reply('Bạn đã chọn rồi, chờ đối thủ.', { reply_to_message_id: ctx.message?.message_id });
+    }
 
-    let winner, loser;
-    if (roll1 > roll2) {
-      winner = challenger;
-      loser = target;
-    } else if (roll2 > roll1) {
-      winner = target;
-      loser = challenger;
+    if (duel.challengerId === from.id) {
+      duel.challengerChoice = move;
+    } else if (duel.targetId === from.id) {
+      duel.targetChoice = move;
+    }
+
+    await ctx.reply(`✅ Bạn đã chọn: ${move.toUpperCase()}`, { reply_to_message_id: ctx.message?.message_id });
+
+    // nếu cả 2 đã chọn thì xử lý kết quả
+    if (duel.challengerChoice && duel.targetChoice) {
+      await resolveDuel(ctx, duel);
     } else {
-      duelRequests.delete(from.id);
-      return ctx.reply(
-        `⚖️ Hòa!\n${challenger.username || challenger.telegramId}: ${roll1}\n${target.username || target.telegramId}: ${roll2}`,
-        { reply_to_message_id: ctx.message?.message_id }
-      );
+      duels.set(keyFound, duel);
     }
+  }
 
-    loser.topCoin -= amount;
-    winner.topCoin = (winner.topCoin || 0) + amount;
-
-    await loser.save();
-    await winner.save();
-
-    duelRequests.delete(from.id);
-
-    await ctx.reply(
-      `🎲 Kết quả duel:\n` +
-      `${challenger.username || challenger.telegramId}: ${roll1}\n` +
-      `${target.username || target.telegramId}: ${roll2}\n\n` +
-      `🏆 Người thắng: ${winner.username || winner.telegramId} (+${amount} coin)`,
-      { reply_to_message_id: ctx.message?.message_id }
-    );
-  });
+  bot.command('attack', async (ctx) => handleDuelChoice(ctx, 'attack'));
+  bot.command('shield', async (ctx) => handleDuelChoice(ctx, 'shield'));
+  bot.command('dodge', async (ctx) => handleDuelChoice(ctx, 'dodge'));
 
   // Quiz đơn giản
   const quizSessions = new Map();
