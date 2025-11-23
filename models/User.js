@@ -1,51 +1,61 @@
 import mongoose from 'mongoose';
 
 const userSchema = new mongoose.Schema({
+  // Thông tin cơ bản
   telegramId: { type: Number, index: true },
-  username: String,
+  username: { type: String, default: '' },
 
-  // Team/Clan
+  // Vai trò (dùng cho admin pack)
+  role: { type: String, default: 'user' }, // 'admin' | 'user'
+
+  // Team / Clan
   teamId: { type: mongoose.Schema.Types.ObjectId, ref: 'Team', default: null },
 
   // XP & level
-  totalXP: { type: Number, default: 0 },
+  totalXP: { type: Number, default: 0 },   // tổng XP dùng tính level
+  dayXP:   { type: Number, default: 0 },   // XP trong ngày
+  weekXP:  { type: Number, default: 0 },   // XP trong tuần
+  monthXP: { type: Number, default: 0 },   // XP trong tháng
 
-  // ✅ đếm số lần chat
-  messageCount: { type: Number, default: 0 },
+  // Giới hạn XP theo phút/ngày
+  minuteXP: { type: Number, default: 0 },  // XP trong phút hiện tại
+  dayKey:   { type: String, default: null },    // 'YYYY-MM-DD' ngày hiện tại
+  minuteKey:{ type: String, default: null },    // 'YYYY-MM-DDTHH:MM' phút hiện tại
 
-  dayXP: { type: Number, default: 0 },
-  weekXP: { type: Number, default: 0 },
-  monthXP: { type: Number, default: 0 },
+  // Đếm tin nhắn
+  messageCount: { type: Number, default: 0 },   // tổng số tin nhắn đã gửi
 
-  // Giới hạn XP theo ngày / phút
-  dayKey: { type: String },          // YYYY-MM-DD
-  minuteKey: { type: String },       // YYYY-MM-DDTHH:MM
-  minuteXP: { type: Number, default: 0 },
-
-  // Coin dùng cho shop / thưởng
+  // Coin (dùng cho shop / send / duel / roll / event)
   topCoin: { type: Number, default: 0 },
 
-  // Quyền
-  role: { type: String, default: 'user' }, // user | admin
-
-  // Trạng thái xử lý
+  // Cảnh cáo / ban
   banned: { type: Boolean, default: false },
-  muted: { type: Boolean, default: false },
+  warningCount: { type: Number, default: 0 },
+  warnings: [
+    {
+      reason: { type: String, default: '' },
+      at: { type: Date, default: Date.now }
+    }
+  ],
 
   // Anti-spam
-  warnCount: { type: Number, default: 0 },
-  lastWarnAt: { type: Date, default: null },
-
   lastMessageText: { type: String, default: '' },
-  lastMessageAt: { type: Date, default: null },
+  lastMessageAt:   { type: Date, default: null },
 
   spamWindowStart: { type: Date, default: null },
-  spamCount: { type: Number, default: 0 },
+  spamCount:       { type: Number, default: 0 },
 
-  // Nhiệm vụ /daily & /claimdaily
-  lastDailyAt: { type: String, default: null },        // ngày đã điểm danh gần nhất: 'YYYY-MM-DD'
-  lastDailyQuestKey: { type: String, default: null },  // ngày đã nhận thưởng nhiệm vụ chat
-  dailyStreak: { type: Number, default: 0 }            // số ngày điểm danh liên tiếp
+  // Daily / nhiệm vụ ngày (/daily, /claimdaily)
+  lastDailyAt:        { type: String, default: null }, // ngày đã điểm danh: 'YYYY-MM-DD'
+  lastDailyQuestKey:  { type: String, default: null }, // ngày đã nhận thưởng nhiệm vụ chat
+  dailyStreak:        { type: Number, default: 0 },    // số ngày điểm danh liên tiếp
+
+  // Giới hạn XP từ QUZ mỗi ngày
+  // /quiz nâng cao đang dùng field này để chặn 200 XP/ngày
+  quizXp: {
+    date: { type: String, default: null }, // 'YYYY-MM-DD'
+    xp:   { type: Number, default: 0 }     // tổng XP đã nhận từ quiz trong ngày đó
+  }
 }, {
   timestamps: true
 });
