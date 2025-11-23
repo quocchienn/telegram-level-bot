@@ -790,4 +790,129 @@ export default (bot) => {
 
     await ctx.reply('✅ Đã duyệt reward.', { reply_to_message_id: ctx.message?.message_id });
   });
+    // ====== MENU NHIỆM VỤ DẠNG NÚT ======
+
+  const questMenuKeyboard = {
+    inline_keyboard: [
+      [
+        { text: '📅 Nhiệm vụ ngày',  callback_data: 'nv_daily' },
+        { text: '📆 Nhiệm vụ tuần',  callback_data: 'nv_week' }
+      ],
+      [
+        { text: '🏆 Nhiệm vụ đặc biệt', callback_data: 'nv_special' },
+        { text: '🎁 Mẹo lên level nhanh', callback_data: 'nv_tips' }
+      ]
+    ]
+  };
+
+  // /nhiemvu – mở menu
+  bot.command('nhiemvu', async (ctx) => {
+    await ctx.reply(
+      '🎯 <b>Menu nhiệm vụ</b>\n\nChọn một mục bên dưới để xem chi tiết.',
+      {
+        parse_mode: 'HTML',
+        reply_markup: questMenuKeyboard,
+        reply_to_message_id: ctx.message?.message_id
+      }
+    );
+  });
+
+  // Nhiệm vụ ngày
+  bot.action('nv_daily', async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(
+      [
+        '📅 <b>Nhiệm vụ ngày</b>',
+        '',
+        '• /daily – điểm danh mỗi ngày:',
+        '  +10 XP • +20 coin',
+        '',
+        '• Chat đủ 40 XP trong ngày:',
+        '  Sau đó dùng <code>/claimdaily</code> để nhận',
+        '  ➜ +30 XP • +30 coin',
+        '',
+        'Gợi ý: Chat > 50 ký tự/tin để được +2 XP thay vì +1.'
+      ].join('\n'),
+      {
+        parse_mode: 'HTML',
+        reply_markup: questMenuKeyboard
+      }
+    );
+  });
+
+  // Nhiệm vụ tuần
+  bot.action('nv_week', async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(
+      [
+        '📆 <b>Nhiệm vụ tuần</b>',
+        '',
+        '• Lọt TOP 10 tuần:',
+        '  ➜ +100 coin (tuỳ bạn config khi chốt top).',
+        '',
+        '• Lọt TOP 3 tuần:',
+        '  ➜ +300 coin hoặc quà Pro (CapCut / Canva...)',
+        '',
+        'Top tuần tính theo XP trong tuần (weekXP).'
+      ].join('\n'),
+      {
+        parse_mode: 'HTML',
+        reply_markup: questMenuKeyboard
+      }
+    );
+  });
+
+  // Nhiệm vụ đặc biệt (mốc level)
+  bot.action('nv_special', async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(
+      [
+        '🏆 <b>Nhiệm vụ đặc biệt (mốc level)</b>',
+        '',
+        'Khi đạt các mốc level sau sẽ được thưởng coin thêm:',
+        '',
+        '• Level 5  ➜ +20 coin',
+        '• Level 10 ➜ +40 coin',
+        '• Level 20 ➜ +60 coin',
+        '• Level 30 ➜ +80 coin',
+        '• Level 40 ➜ +100 coin',
+        '• Level 50 ➜ +150 coin',
+        '• Level 75 ➜ +200 coin',
+        '• Level 100 ➜ +300 coin',
+        '',
+        'Coin sẽ tự cộng khi bot phát hiện bạn vừa lên mốc đó.'
+      ].join('\n'),
+      {
+        parse_mode: 'HTML',
+        reply_markup: questMenuKeyboard
+      }
+    );
+  });
+
+  // Mẹo lên level nhanh
+  bot.action('nv_tips', async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(
+      [
+        '🎁 <b>Mẹo lên level & kiếm coin nhanh</b>',
+        '',
+        '• Viết tin nhắn dài, có nội dung:',
+        '  > 50 ký tự ➜ +2 XP / tin',
+        '',
+        '• Không spam ký tự ngắn, emoji, sticker:',
+        '  Bot không cộng XP + dễ ăn cảnh cáo spam.',
+        '',
+        '• Online đều mỗi ngày:',
+        '  Dùng /daily + /claimdaily để lấy XP + coin free.',
+        '',
+        '• Cày top tuần/tháng để nhận thưởng lớn.',
+        '',
+        'Xem tiến trình của bạn bằng lệnh /me.'
+      ].join('\n'),
+      {
+        parse_mode: 'HTML',
+        reply_markup: questMenuKeyboard
+      }
+    );
+  });
 };
